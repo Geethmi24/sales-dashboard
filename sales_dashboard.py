@@ -297,7 +297,7 @@ def parse_excel(file_obj):
             tar_s = raw.iloc[prod_rows, tc].apply(pd.to_numeric, errors='coerce').fillna(0)
             ach_s = raw.iloc[prod_rows, ac].apply(pd.to_numeric, errors='coerce').fillna(0) if ac < raw.shape[1] else pd.Series([0]*len(prod_rows))
             ach_t = float(pd.to_numeric(ach_s, errors='coerce').fillna(0).sum())
-            ach_t = float(ach_s.sum())
+             
             var   = ach_t - tar_t
             pct   = (ach_t / tar_t * 100) if tar_t else 0.0
             units_ms[ename] = dict(TAR=tar_t, ACH=ach_t, VAR=var, PCT=pct)
