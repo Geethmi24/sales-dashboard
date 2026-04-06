@@ -1190,16 +1190,26 @@ with tab3:
     # TAB 4 — RP / REP DETAIL
     # ══════════════════════════════════════════════════
 with tab4:
-    section(f"SALES REP PERFORMANCE — {sel_month} (LKR)")
-    rp_to_dm = {rp: dm for dm, rps in drm.items() for rp in rps}
-    all_reps = [e for e in eo if e != 'TOTAL' and not is_dm(e)]
+    rp_sel_month = st.selectbox(
+        "Select Month", month_list,
+        index=month_list.index(sel_month),
+        key="rp_month"
+    )
+    rp_lkr_ms   = all_lkr[rp_sel_month]
+    rp_units_ms = all_units[rp_sel_month]
+    rp_drm      = all_dm_rp[rp_sel_month]
+    rp_eo       = all_eo[rp_sel_month]
+
+    section(f"SALES REP PERFORMANCE — {rp_sel_month} (LKR)")
+    rp_to_dm = {rp: dm for dm, rps in rp_drm.items() for rp in rps}
+    all_reps = [e for e in rp_eo if e != 'TOTAL' and not is_dm(e)]
     disp_reps = all_reps if dm_filter == "ALL" else [r for r in all_reps if rp_to_dm.get(r) == dm_filter]
     # Hide RPs with all-zero LKR and unit values
     disp_reps = [r for r in disp_reps
-                 if lkr_ms.get(r, {}).get("TAR_LKR", 0) != 0
-                 or lkr_ms.get(r, {}).get("ACH_LKR", 0) != 0
-                 or units_ms.get(r, {}).get("TAR", 0) != 0
-                 or units_ms.get(r, {}).get("ACH", 0) != 0]
+                 if rp_lkr_ms.get(r, {}).get("TAR_LKR", 0) != 0
+                 or rp_lkr_ms.get(r, {}).get("ACH_LKR", 0) != 0
+                 or rp_units_ms.get(r, {}).get("TAR", 0) != 0
+                 or rp_units_ms.get(r, {}).get("ACH", 0) != 0]
 
     if not disp_reps:
         st.info("No rep data for current filter.")
@@ -1210,7 +1220,7 @@ with tab4:
             groups.setdefault(owner, []).append(rp)
 
         for owner, rps in groups.items():
-            dm_d = lkr_ms.get(owner, {})
+            dm_d = rp_lkr_ms.get(owner, {})
             dm_t = dm_d.get("TAR_LKR", 0)
             dm_a = dm_d.get("ACH_LKR", 0)
             dm_p = dm_d.get("PCT_LKR", 0)
@@ -1221,11 +1231,11 @@ with tab4:
             dm_bar = min(dm_p, 100)
 
             rp_rows = [dict(name=r,
-                            TAR=lkr_ms.get(r, {}).get('TAR_LKR', 0),
-                            ACH=lkr_ms.get(r, {}).get('ACH_LKR', 0),
-                            PCT=lkr_ms.get(r, {}).get('PCT_LKR', 0),
-                            VAR=lkr_ms.get(r, {}).get('VAR_LKR', 0))
-                       for r in rps if lkr_ms.get(r, {}).get('TAR_LKR', 0) > 0]
+                            TAR=rp_lkr_ms.get(r, {}).get('TAR_LKR', 0),
+                            ACH=rp_lkr_ms.get(r, {}).get('ACH_LKR', 0),
+                            PCT=rp_lkr_ms.get(r, {}).get('PCT_LKR', 0),
+                            VAR=rp_lkr_ms.get(r, {}).get('VAR_LKR', 0))
+                       for r in rps if rp_lkr_ms.get(r, {}).get('TAR_LKR', 0) > 0]
             rp_rows_s = sorted(rp_rows, key=lambda x: x['PCT'], reverse=True)
 
             # ── Build the full DM block as one HTML chunk ─────────────────
@@ -1350,10 +1360,10 @@ with tab4:
             '<div class="card-wrap"><div class="card-title">All Reps — Ranked by Achievement %</div><div class="card-sub">Across all DMs · sorted highest to lowest</div>',
             unsafe_allow_html=True)
         achievement_rows_ui(
-            [dict(name=r, TAR=lkr_ms.get(r, {}).get('TAR_LKR', 0),
-                  ACH=lkr_ms.get(r, {}).get('ACH_LKR', 0),
-                  PCT=lkr_ms.get(r, {}).get('PCT_LKR', 0))
-             for r in disp_reps if lkr_ms.get(r, {}).get('TAR_LKR', 0) > 0],
+            [dict(name=r, TAR=rp_lkr_ms.get(r, {}).get('TAR_LKR', 0),
+                  ACH=rp_lkr_ms.get(r, {}).get('ACH_LKR', 0),
+                  PCT=rp_lkr_ms.get(r, {}).get('PCT_LKR', 0))
+             for r in disp_reps if rp_lkr_ms.get(r, {}).get('TAR_LKR', 0) > 0],
             fmt_fn=fmt_lkr)
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -1383,13 +1393,13 @@ with tab4:
             st.markdown('</div>', unsafe_allow_html=True)
 
         rp_tbl = [{"Rep": r, "Under DM": rp_to_dm.get(r, "—"),
-                   "Target LKR": round(lkr_ms.get(r, {}).get('TAR_LKR', 0)),
-                   "Achievement LKR": round(lkr_ms.get(r, {}).get('ACH_LKR', 0)),
-                   "LKR Ach%": round(lkr_ms.get(r, {}).get('PCT_LKR', 0), 1),
-                   "LKR Variance": round(lkr_ms.get(r, {}).get('VAR_LKR', 0)),
-                   "Target Units": round(units_ms.get(r, {}).get('TAR', 0)),
-                   "Achievement Units": round(units_ms.get(r, {}).get('ACH', 0)),
-                   "Unit Ach%": round(units_ms.get(r, {}).get('PCT', 0), 1)}
+                   "Target LKR": round(rp_lkr_ms.get(r, {}).get('TAR_LKR', 0)),
+                   "Achievement LKR": round(rp_lkr_ms.get(r, {}).get('ACH_LKR', 0)),
+                   "LKR Ach%": round(rp_lkr_ms.get(r, {}).get('PCT_LKR', 0), 1),
+                   "LKR Variance": round(rp_lkr_ms.get(r, {}).get('VAR_LKR', 0)),
+                   "Target Units": round(rp_units_ms.get(r, {}).get('TAR', 0)),
+                   "Achievement Units": round(rp_units_ms.get(r, {}).get('ACH', 0)),
+                   "Unit Ach%": round(rp_units_ms.get(r, {}).get('PCT', 0), 1)}
                   for r in disp_reps]
         if rp_tbl:
             rp_df = pd.DataFrame(rp_tbl)
@@ -1401,7 +1411,7 @@ with tab4:
             dl3, _ = st.columns([1, 5])
             with dl3:
                 st.download_button("⬇️ Export CSV", data=rp_df.to_csv(index=False).encode("utf-8"),
-                                   file_name=f"megaderma_reps_{sel_month}.csv", mime="text/csv",
+                                   file_name=f"megaderma_reps_{rp_sel_month}.csv", mime="text/csv",
                                    use_container_width=True)
 
 # ╔══════════════════════════════╗
