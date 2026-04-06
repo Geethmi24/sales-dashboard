@@ -1,4 +1,4 @@
-"""
+ """
 MEGA DERMA Sales Intelligence Hub — v10.0 (Cumulative Tab Added)
 """
 
@@ -1056,6 +1056,15 @@ with tab2:
 # ║  TAB 3 — DM BREAKDOWN       ║
 # ╚══════════════════════════════╝
 with tab3:
+    dm_sel_month = st.selectbox(
+        "Select Month", month_list,
+        index=month_list.index(sel_month),
+        key="dm_month"
+    )
+    dm_lkr_ms = all_lkr[dm_sel_month]
+    dm_drm    = all_dm_rp[dm_sel_month]
+    dm_eo     = all_eo[dm_sel_month]
+
     section("DM MONTHLY TREND (LKR)")
     dm_trend = []
     for m in month_list:
@@ -1074,7 +1083,7 @@ with tab3:
         dm_cols = st.columns(len(active_dms))
 
         for i, dm_name in enumerate(active_dms):
-            dm_d = lkr_ms.get(dm_name, {})
+            dm_d = dm_lkr_ms.get(dm_name, {})
             dm_t = dm_d.get("TAR_LKR", 0)
             dm_a = dm_d.get("ACH_LKR", 0)
             dm_p = dm_d.get("PCT_LKR", 0)
@@ -1136,20 +1145,20 @@ with tab3:
     # बाकी code (UNCHANGED)
     # ─────────────────────────────────────────────
 
-    section(f"DM → RP HIERARCHY — {sel_month} (LKR)")
+    section(f"DM → RP HIERARCHY — {dm_sel_month} (LKR)")
     st.markdown(
         '<div class="info-box">All LKR values read directly from <strong>row 17</strong> of the Excel sheet. DM total = sum of its RP sub-columns.</div>',
         unsafe_allow_html=True)
 
-    filtered_drm = {k: v for k, v in drm.items()
+    filtered_drm = {k: v for k, v in dm_drm.items()
                     if (dm_filter == "ALL" or k == dm_filter)
-                    and (lkr_ms.get(k, {}).get("TAR_LKR", 0) != 0
-                         or lkr_ms.get(k, {}).get("ACH_LKR", 0) != 0)}
+                    and (dm_lkr_ms.get(k, {}).get("TAR_LKR", 0) != 0
+                         or dm_lkr_ms.get(k, {}).get("ACH_LKR", 0) != 0)}
     filtered_drm = {dm: [rp for rp in rps
-                         if lkr_ms.get(rp, {}).get("TAR_LKR", 0) != 0
-                         or lkr_ms.get(rp, {}).get("ACH_LKR", 0) != 0]
+                         if dm_lkr_ms.get(rp, {}).get("TAR_LKR", 0) != 0
+                         or dm_lkr_ms.get(rp, {}).get("ACH_LKR", 0) != 0]
                     for dm, rps in filtered_drm.items()}
-    render_dm_hierarchy(filtered_drm, lkr_ms, fmt_fn=fmt_lkr, label="LKR")
+    render_dm_hierarchy(filtered_drm, dm_lkr_ms, fmt_fn=fmt_lkr, label="LKR")
 
     fig_dml = px.line(dt_df, x="Month", y="ACH", color="DM", markers=True,
                       color_discrete_sequence=PALETTE, labels={"ACH": "Achievement (LKR)"},
