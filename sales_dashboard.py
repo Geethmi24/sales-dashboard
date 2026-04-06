@@ -1077,9 +1077,10 @@ with tab3:
     if dm_trend:
         dt_df = pd.DataFrame(dm_trend)
         if dm_filter != "ALL": dt_df = dt_df[dt_df["DM"] == dm_filter]
+        dt_df_month = dt_df[dt_df["Month"] == dm_sel_month]
 
-        # ── DM Target & Achievement summary cards ───────────────────────
-        active_dms = sorted(dt_df["DM"].unique())
+        # ── DM Target & Achievement summary cards — selected month only ──
+        active_dms = sorted(dt_df_month["DM"].unique()) if not dt_df_month.empty else sorted(dt_df["DM"].unique())
         dm_cols = st.columns(len(active_dms))
 
         for i, dm_name in enumerate(active_dms):
