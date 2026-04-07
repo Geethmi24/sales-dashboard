@@ -259,6 +259,7 @@ def parse_excel(file_obj):
         row1 = raw.iloc[1]
 
         entity_cols = {}
+        name_count = {}
         for j in range(4, raw.shape[1] - 1, 2):
             name_cell = row0.iloc[j] if j < len(row0) else None
             if pd.isna(name_cell) or str(name_cell).strip() in ('', 'nan'):
@@ -266,7 +267,15 @@ def parse_excel(file_obj):
             hdr = str(row1.iloc[j]).strip() if j < len(row1) and pd.notna(row1.iloc[j]) else ''
             if hdr not in ('TAR', ''):
                 continue
-            entity_cols[str(name_cell).strip()] = j
+            base_name = str(name_cell).strip()
+            # Handle duplicate names (e.g. VACANT appearing twice)
+            if base_name in name_count:
+                name_count[base_name] += 1
+                unique_name = f"{base_name}-{name_count[base_name]}"
+            else:
+                name_count[base_name] = 1
+                unique_name = base_name
+            entity_cols[unique_name] = j
 
         if not entity_cols:
             continue
