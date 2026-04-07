@@ -246,6 +246,8 @@ def parse_excel(file_obj):
     all_prices = {}
     # NEW: store raw product-level unit data per sheet: {sheet: {entity: {product: {TAR, ACH}}}}
     all_prod_entity = {}
+    # F column % values per sheet: {sheet: {product: pct}}
+    all_f_pct = {}
 
     for sheet in sheets:
         try:
@@ -378,7 +380,27 @@ def parse_excel(file_obj):
                 ))
         all_prod[sheet] = pd.DataFrame(prod_rows_list) if prod_rows_list else pd.DataFrame()
 
-    return all_lkr, all_units, all_dm_rp, all_eo, all_prod, all_prices, all_prod_entity
+        # Read F column (index 5) % directly — one per month
+        f_pct_sheet = {}
+        perf_hdr_row = None
+        for r in range(70, min(100, raw.shape[0])):
+            val = str(raw.iloc[r, 1]).strip() if pd.notna(raw.iloc[r, 1]) else ''
+            if val == 'PRODUCT':
+                perf_hdr_row = r
+                break
+        if perf_hdr_row is not None:
+            for dr in range(perf_hdr_row + 1, perf_hdr_row + 15):
+                if dr >= raw.shape[0]: break
+                prod_name = raw.iloc[dr, 1]
+                pct_val   = raw.iloc[dr, 5]
+                if pd.notna(prod_name) and str(prod_name).strip() not in ('', '0', 'nan') and pd.notna(pct_val):
+                    try:
+                        f_pct_sheet[str(prod_name).strip()] = round(float(pct_val) * 100, 2)
+                    except:
+                        pass
+        all_f_pct[sheet] = f_pct_sheet
+
+    return all_lkr, all_units, all_dm_rp, all_eo, all_prod, all_prices, all_prod_entity, all_f_pct
 
 
 # ══════════════════════════════════════════════════════
@@ -627,7 +649,7 @@ st.markdown('<span style="font-weight:bold">📅 Month</span>', unsafe_allow_htm
 if uploaded_file:
     with st.spinner("Parsing Excel…"):
         (all_lkr, all_units, all_dm_rp,
-         all_eo, all_prod, global_prices, all_prod_entity) = parse_excel(uploaded_file)
+         all_eo, all_prod, global_prices, all_prod_entity, all_f_pct) = parse_excel(uploaded_file)
 
     month_list = [m for m in MONTH_ORDER if m in all_lkr]
     if not month_list:
@@ -1660,14 +1682,19 @@ with tab7:
     # MATRIX VIEW: Rows = Products, Columns = Months
     # Each cell shows Cumulative % for that product up to that month
     # ══════════════════════════════════════════════════════════════
-    section(f"CUMULATIVE % MATRIX — {entity_for_kpi} · Products × Months")
+    section(f"CUMULATIVE % MATRIX — TOTAL · Products × Months")
     st.markdown(f"""<div class="info-box">
-    Each cell = cumulative ACH ÷ cumulative TAR from <strong>APR</strong> up to that month column.
-    &nbsp;🟢 ≥100% &nbsp;🟡 80–99% &nbsp;🔴 &lt;80% &nbsp;⬜ 0% (no target in that product)
+    Each cell = F column % value directly from Excel Sales Performance table for that month.
+    &nbsp;🟢 ≥100% &nbsp;🟡 80–99% &nbsp;🔴 &lt;80% &nbsp;⬜ No data
     </div>""", unsafe_allow_html=True)
 
-    # Build matrix: products (rows) × months (cols)
-    products_to_show = all_products if cum_sel_product == "ALL Products" else [cum_sel_product]
+    # Get all products from F column data across all months
+    f_all_products = set()
+    for m in months_up_to:
+        f_all_products.update(all_f_pct.get(m, {}).keys())
+    f_all_products = sorted(f_all_products)
+
+    products_to_show = f_all_products if cum_sel_product == "ALL Products" else ([cum_sel_product] if cum_sel_product in f_all_products else f_all_products)
 
     # Table header
     month_headers = "".join([f'<th>{m}</th>' for m in months_up_to])
@@ -1686,33 +1713,14 @@ with tab7:
     for product in products_to_show:
         row_html = f'<tr><td class="entity-name">{product}</td>'
         for m in months_up_to:
-            d   = cum_data.get(m, {}).get(entity_for_kpi, {}).get(product, {})
-            pct = d.get('CUM_PCT', 0.0)
-            cum_t = d.get('CUM_TAR', 0.0)
-            cum_a = d.get('CUM_ACH', 0.0)
-
-            if cum_t == 0:
-                row_html += f'<td class="pct-cell pct-zero" title="No target">—</td>'
+            pct = all_f_pct.get(m, {}).get(product, None)
+            if pct is None:
+                row_html += '<td class="pct-cell pct-zero">—</td>'
             else:
                 cls = "pct-green" if pct >= 100 else "pct-amber" if pct >= 80 else "pct-red"
-                row_html += (f'<td class="pct-cell {cls}" '
-                             f'title="CUM TAR: {cum_t:,.0f} | CUM ACH: {cum_a:,.0f}">'
-                             f'{pct:.1f}%</td>')
+                row_html += f'<td class="pct-cell {cls}" title="{m}: {pct:.1f}%">{pct:.1f}%</td>'
         row_html += '</tr>'
         matrix_html += row_html
-
-    # Totals row (all products combined)
-    matrix_html += '<tr class="total-row"><td class="entity-name">∑ ALL PRODUCTS</td>'
-    for m in months_up_to:
-        tot_tar = sum(cum_data.get(m, {}).get(entity_for_kpi, {}).get(p, {}).get('CUM_TAR', 0.0) for p in products_to_show)
-        tot_ach = sum(cum_data.get(m, {}).get(entity_for_kpi, {}).get(p, {}).get('CUM_ACH', 0.0) for p in products_to_show)
-        tot_pct = (tot_ach / tot_tar * 100) if tot_tar > 0 else 0.0
-        if tot_tar == 0:
-            matrix_html += '<td class="pct-cell pct-zero">—</td>'
-        else:
-            cls = "pct-green" if tot_pct >= 100 else "pct-amber" if tot_pct >= 80 else "pct-red"
-            matrix_html += f'<td class="pct-cell {cls}" title="CUM TAR: {tot_tar:,.0f} | CUM ACH: {tot_ach:,.0f}">{tot_pct:.1f}%</td>'
-    matrix_html += '</tr>'
 
     matrix_html += "</tbody></table></div>"
     st.markdown(matrix_html, unsafe_allow_html=True)
