@@ -718,7 +718,7 @@ with st.sidebar:
 
         with st.spinner("Parsing Excel…"):
             (all_lkr, all_units, all_dm_rp,
-             all_eo, all_prod, all_prod_entity, all_f_pct) = parse_excel(uploaded_file)
+             all_eo, all_prod, all_prod_entity, all_f_pct, _) = parse_excel(uploaded_file)
 
         month_list = [m for m in MONTH_ORDER if m in all_lkr]
         if not month_list:
