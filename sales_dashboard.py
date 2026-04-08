@@ -217,42 +217,6 @@ def kpi_card(col, label, value, icon, color, badge_text=None, badge_cls="neu", s
 # EXCEL PARSING — UNIVERSAL v12
 # ══════════════════════════════════════════════════════
 
-def parse_monthly_f_pct(raw):
-    """
-    Find the Sales Performance section (col A='#', col B='PRODUCT', col F='%')
-    and read each product's monthly achievement ratio from col F.
-    Returns dict: {product_name: pct_float} where pct already multiplied by 100.
-    NaN values (unfilled months) are excluded.
-    """
-    hdr_row = None
-    for i in range(20, min(150, raw.shape[0])):
-        a = str(raw.iloc[i, 0]).strip() if pd.notna(raw.iloc[i, 0]) else ''
-        b = str(raw.iloc[i, 1]).strip() if pd.notna(raw.iloc[i, 1]) else ''
-        f = str(raw.iloc[i, 5]).strip() if raw.shape[1] > 5 and pd.notna(raw.iloc[i, 5]) else ''
-        if a == '#' and b == 'PRODUCT' and f == '%':
-            hdr_row = i
-            break
-    if hdr_row is None:
-        return {}
-    products = {}
-    for r in range(hdr_row + 1, hdr_row + 40):
-        if r >= raw.shape[0]: break
-        prod = raw.iloc[r, 1]
-        if not isinstance(prod, str): continue
-        prod = prod.strip()
-        if prod in ('', 'TOTAL', '0', 'nan', '#'):
-            if prod == 'TOTAL': break
-            continue
-        f_val = raw.iloc[r, 5]
-        try:
-            pct = float(f_val) * 100
-            if not pd.isna(pct):
-                products[prod] = round(pct, 2)
-        except:
-            pass
-    return products
-
-
 def find_total_row(raw):
     """
     Find the FIRST TOTAL row that has a large LKR number.
@@ -305,8 +269,6 @@ def parse_excel(file_obj):
     all_eo            = {}
     all_prod          = {}
     all_prod_entity   = {}
-    all_f_pct         = {}
-    all_perf          = {}
 
     for sheet in sheets:
         try:
@@ -407,9 +369,6 @@ def parse_excel(file_obj):
                 dm_rp[cur_dm].append(ename)
         all_dm_rp[sheet] = dm_rp
 
-        # ── Monthly F-column % data ───────────────────────────────
-        all_f_pct[sheet] = parse_monthly_f_pct(raw)
-
         # ── Full product rows DataFrame ───────────────────────────
         prod_rows_list = []
         for r in prod_rows:
@@ -430,57 +389,7 @@ def parse_excel(file_obj):
                 ))
         all_prod[sheet] = pd.DataFrame(prod_rows_list) if prod_rows_list else pd.DataFrame()
 
-        # ── Sales Performance section (rows ~78-95) ───────────────
-        # Row pattern: row N-2: "Sales Performance for TOTAL"
-        #              row N-1: col2=month, col6="CUMULATIVE"
-        #              row N:   headers # PRODUCT TAR ACH VAR % TAR ACH VAR %
-        #              row N+1+: products
-        # Col 5 = monthly ratio (e.g. 1.025 = 102.5%)
-        # Col 9 = cumulative ratio (NaN for APR = first month)
-        perf_hdr_row = None
-        for i in range(70, min(100, raw.shape[0])):
-            v0 = str(raw.iloc[i, 0]).strip() if pd.notna(raw.iloc[i, 0]) else ''
-            v1 = str(raw.iloc[i, 1]).strip() if pd.notna(raw.iloc[i, 1]) else ''
-            if v0 == '#' and v1 == 'PRODUCT':
-                perf_hdr_row = i
-                break
-        perf_data = {}
-        if perf_hdr_row is not None:
-            skip_perf = {'', 'nan', 'TOTAL'}
-            for r in range(perf_hdr_row + 1, perf_hdr_row + 35):
-                if r >= raw.shape[0]: break
-                pname = raw.iloc[r, 1]
-                row_num = raw.iloc[r, 0]
-                if not isinstance(pname, str): continue
-                pname = pname.strip()
-                if pname in skip_perf or pname == '': continue
-                # Must have a numeric row number in col 0
-                if not pd.notna(row_num): continue
-                try:
-                    float(row_num)
-                except (ValueError, TypeError):
-                    continue
-                m_pct_raw = pd.to_numeric(raw.iloc[r, 5], errors='coerce')
-                c_tar     = pd.to_numeric(raw.iloc[r, 6], errors='coerce')
-                c_ach     = pd.to_numeric(raw.iloc[r, 7], errors='coerce')
-                c_pct_raw = pd.to_numeric(raw.iloc[r, 9], errors='coerce')
-                m_pct = float(m_pct_raw) * 100 if pd.notna(m_pct_raw) else None
-                c_tar_v = float(c_tar) if pd.notna(c_tar) and float(c_tar) > 0 else None
-                c_ach_v = float(c_ach) if pd.notna(c_ach) else None
-                # APR: cum cols NaN → cum_pct = monthly pct
-                if pd.notna(c_pct_raw):
-                    c_pct = float(c_pct_raw) * 100
-                elif m_pct is not None:
-                    c_pct = m_pct
-                else:
-                    c_pct = None
-                perf_data[pname] = dict(
-                    month_pct=m_pct, cum_tar=c_tar_v,
-                    cum_ach=c_ach_v, cum_pct=c_pct
-                )
-        all_perf[sheet] = perf_data
-
-    return all_lkr, all_units, all_dm_rp, all_eo, all_prod, all_prod_entity, all_f_pct, all_perf
+    return all_lkr, all_units, all_dm_rp, all_eo, all_prod, all_prod_entity
 
 
 # ══════════════════════════════════════════════════════
@@ -718,7 +627,7 @@ with st.sidebar:
 
         with st.spinner("Parsing Excel…"):
             (all_lkr, all_units, all_dm_rp,
-             all_eo, all_prod, all_prod_entity, all_f_pct, _) = parse_excel(uploaded_file)
+             all_eo, all_prod, all_prod_entity) = parse_excel(uploaded_file)
 
         month_list = [m for m in MONTH_ORDER if m in all_lkr]
         if not month_list:
@@ -1558,121 +1467,6 @@ with tab7:
                 data=comp_disp.to_csv(index=False).encode("utf-8"),
                 file_name=f"{dash_title}_cumulative_{cum_sel_month}.csv", mime="text/csv",
                 use_container_width=True)
-
-
-    # ════════════════════════════════════════════════════
-    # SALES PERFORMANCE — MONTHLY % FROM EXCEL F COLUMN
-    # ════════════════════════════════════════════════════
-    section("📊 SALES PERFORMANCE — CUMULATIVE MONTHLY % (EXCEL F COL)")
-    st.markdown("""<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;
-    padding:10px 16px;margin-bottom:1.2rem;font-size:.8rem;color:#1e40af">
-    <strong>Excel Sales Performance section ගේ F column (monthly %) values.</strong>
-    APR select → APR % only &nbsp;|&nbsp;
-    MAY select → APR % + MAY % දෙකම &nbsp;|&nbsp;
-    JUN select → APR + MAY + JUN — MAR දක්වා.
-    </div>""", unsafe_allow_html=True)
-
-    perf_months = month_list[:month_list.index(cum_sel_month) + 1]
-
-    all_perf_products = set()
-    for m in perf_months:
-        all_perf_products.update(all_f_pct.get(m, {}).keys())
-    all_perf_products = sorted(all_perf_products)
-
-    if not all_perf_products:
-        st.info(f"No Sales Performance data found up to {cum_sel_month}.")
-    else:
-        table_rows = []
-        for prod in all_perf_products:
-            row = {"Product": prod}
-            for m in perf_months:
-                pct = all_f_pct.get(m, {}).get(prod)
-                row[m] = round(pct, 1) if pct is not None else None
-            table_rows.append(row)
-
-        last_pcts = [all_f_pct.get(cum_sel_month, {}).get(p) for p in all_perf_products]
-        last_pcts = [p for p in last_pcts if p is not None]
-        avg_pct  = sum(last_pcts) / len(last_pcts) if last_pcts else 0
-        n_above  = sum(1 for p in last_pcts if p >= 100)
-        n_amber  = sum(1 for p in last_pcts if 80 <= p < 100)
-        n_below  = sum(1 for p in last_pcts if p < 80)
-
-        pk1, pk2, pk3, pk4 = st.columns(4)
-        kpi_card(pk1, f"Avg Ach % — {cum_sel_month}", f"{avg_pct:.1f}%", "📊",
-                 "c-green" if avg_pct>=100 else "c-amber" if avg_pct>=80 else "c-red",
-                 badge_cls=pct_cls(avg_pct))
-        kpi_card(pk2, "Products ≥ 100%", str(n_above), "✅", "c-green", sub=f"in {cum_sel_month}")
-        kpi_card(pk3, "Products 80–99%", str(n_amber), "⚠️", "c-amber", sub=f"in {cum_sel_month}")
-        kpi_card(pk4, "Products < 80%", str(n_below), "🔴", "c-red", sub=f"in {cum_sel_month}")
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        col_bar_p, col_trend_p = st.columns([2, 3])
-
-        with col_bar_p:
-            st.markdown('<div class="card"><div class="card-title">Achievement % by Product</div>', unsafe_allow_html=True)
-            bar_data = [(p, all_f_pct.get(cum_sel_month, {}).get(p) or 0) for p in all_perf_products]
-            bar_data_s = sorted(bar_data, key=lambda x: x[1])
-            fig_pb2 = go.Figure(go.Bar(
-                y=[b[0] for b in bar_data_s],
-                x=[b[1] for b in bar_data_s],
-                orientation="h",
-                marker=dict(color=[pct_color(b[1]) for b in bar_data_s], opacity=0.85, line=dict(width=0)),
-                text=[f"{b[1]:.1f}%" for b in bar_data_s], textposition="outside"))
-            fig_pb2.add_vline(x=100, line_color="#22c55e", line_dash="dot", line_width=2)
-            fig_pb2.update_layout(**PLOTLY_BASE, height=max(300, len(bar_data_s)*34),
-                margin=dict(t=10, b=40, l=200, r=80),
-                xaxis=dict(gridcolor="#f1f5f9", tickfont=dict(size=10, color="#94a3b8"), ticksuffix="%"),
-                yaxis=dict(tickfont=dict(size=10, color="#64748b")))
-            st.plotly_chart(fig_pb2, use_container_width=True, config={"displayModeBar": False})
-            st.markdown('</div>', unsafe_allow_html=True)
-
-        with col_trend_p:
-            st.markdown('<div class="card"><div class="card-title">Monthly % Trend (APR → selected month)</div></div>', unsafe_allow_html=True)
-            trend_rows_p = []
-            for prod in all_perf_products:
-                for m in perf_months:
-                    pct = all_f_pct.get(m, {}).get(prod)
-                    if pct is not None:
-                        trend_rows_p.append(dict(Month=m, Product=prod, Pct=pct))
-            if trend_rows_p:
-                tp_df = pd.DataFrame(trend_rows_p)
-                fig_tp = px.line(tp_df, x="Month", y="Pct", color="Product",
-                                 markers=True, color_discrete_sequence=PALETTE,
-                                 labels={"Pct": "Achievement %"})
-                fig_tp.add_hline(y=100, line_color="#22c55e", line_dash="dot", line_width=2)
-                fig_tp.update_layout(**PLOTLY_BASE, height=max(340, len(all_perf_products)*20+200),
-                    margin=dict(t=10, b=40, l=70, r=20),
-                    legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h",
-                                y=1.05, xanchor="right", x=1, font=dict(size=10)),
-                    xaxis=dict(tickfont=dict(size=11, color="#64748b"), showgrid=False),
-                    yaxis=dict(gridcolor="#f1f5f9", tickfont=dict(size=10, color="#94a3b8"),
-                               title="Achievement %", ticksuffix="%"))
-                st.plotly_chart(fig_tp, use_container_width=True, config={"displayModeBar": False})
-
-        section(f"PRODUCT MONTHLY % TABLE  (APR → {cum_sel_month})")
-        det_df = pd.DataFrame(table_rows)
-        fmt_dict = {m: "{:.1f}%" for m in perf_months if m in det_df.columns}
-
-        def style_pct_cell(v):
-            if not isinstance(v, (int, float)): return ""
-            if v >= 100: return "background:#dcfce7;color:#15803d;font-weight:700"
-            if v >= 80:  return "background:#fef3c7;color:#92400e;font-weight:700"
-            return "background:#fee2e2;color:#b91c1c;font-weight:700"
-
-        styled_det = det_df.style.format(fmt_dict, na_rep="—")
-        for m in perf_months:
-            if m in det_df.columns:
-                styled_det = styled_det.map(style_pct_cell, subset=[m])
-
-        st.dataframe(styled_det, use_container_width=True, hide_index=True,
-                     height=min(600, len(det_df)*42+60))
-
-        dl8, _ = st.columns([1, 5])
-        with dl8:
-            st.download_button("⬇️ Export Monthly % CSV",
-                data=det_df.to_csv(index=False).encode("utf-8"),
-                file_name=f"{dash_title}_monthly_pct_{cum_sel_month}.csv",
-                mime="text/csv", use_container_width=True)
 
 # ══════════════════════════════════════════════════════
 # FOOTER
