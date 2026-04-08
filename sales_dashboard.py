@@ -1004,6 +1004,7 @@ with tab3:
     dm_sel_month = st.selectbox("Select Month", month_list,
         index=month_list.index(sel_month), key="dm_month")
     dm_lkr_ms = all_lkr[dm_sel_month]
+    dm_units_ms = all_units[dm_sel_month]
     dm_drm    = all_dm_rp[dm_sel_month]
     dm_eo     = all_eo[dm_sel_month]
 
@@ -1015,59 +1016,199 @@ with tab3:
             if not d.get('TAR_LKR'): continue
             dm_trend.append(dict(Month=m, DM=e, TAR=d['TAR_LKR'], ACH=d['ACH_LKR'], PCT=d['PCT_LKR']))
 
-    section("DM MONTHLY PERFORMANCE CARDS")
-    if dm_trend:
-        dt_df = pd.DataFrame(dm_trend)
-        if dm_filter != "ALL": dt_df = dt_df[dt_df["DM"]==dm_filter]
-        dt_month = dt_df[dt_df["Month"]==dm_sel_month]
-        active_dms = sorted(dt_month["DM"].unique()) if not dt_month.empty else sorted(dt_df["DM"].unique())
-        dm_cols = st.columns(max(len(active_dms),1))
+    section("DM BREAKDOWN — WITH RP DETAILS")
 
-        for i, dm_name in enumerate(active_dms):
-            dm_d = dm_lkr_ms.get(dm_name, {})
-            dm_t = dm_d.get("TAR_LKR",0); dm_a = dm_d.get("ACH_LKR",0)
-            dm_p = dm_d.get("PCT_LKR",0); dm_v = dm_d.get("VAR_LKR",0)
-            bc   = pct_color(dm_p)
-            bbg  = "#d1fae5" if dm_p>=100 else "#fef3c7" if dm_p>=80 else "#fee2e2"
-            bfg  = "#065f46" if dm_p>=100 else "#92400e" if dm_p>=80 else "#991b1b"
-            vc   = "#059669" if dm_v>=0 else "#dc2626"
-            mw   = max(dm_t, dm_a, 1)
-            dm_cols[i].markdown(f"""
-            <div style="background:#fff;border:1px solid #e8edf5;border-radius:14px;
-                        padding:1.1rem 1.2rem;box-shadow:0 2px 8px rgba(0,0,0,0.05);
-                        border-top:3px solid {bc}">
-              <div style="font-size:.72rem;font-weight:700;color:#64748b;overflow:hidden;
-                          text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px"
-                   title="{dm_name}">👤 {dm_name}</div>
-              <div style="font-size:.78rem;color:#1e293b;font-weight:600">Target</div>
-              <div style="font-size:1rem;font-weight:700;color:#1e293b">{fmt_lkr(dm_t)}</div>
-              <div style="background:#f1f5f9;border-radius:999px;height:6px;margin-bottom:8px">
-                <div style="width:{(dm_t/mw*100):.1f}%;height:100%;background:#3b82f6;border-radius:999px"></div>
-              </div>
-              <div style="font-size:.78rem;color:#1e293b;font-weight:600">Achievement</div>
-              <div style="font-size:1rem;font-weight:700;color:{bc}">{fmt_lkr(dm_a)}</div>
-              <div style="background:#f1f5f9;border-radius:999px;height:6px;margin-bottom:8px">
-                <div style="width:{(dm_a/mw*100):.1f}%;height:100%;background:{bc};border-radius:999px"></div>
-              </div>
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <div style="font-size:.7rem;font-weight:600;color:{vc}">{"+" if dm_v>=0 else ""}{fmt_lkr(dm_v)}</div>
-                <span style="font-size:.72rem;font-weight:700;padding:2px 10px;border-radius:999px;
-                             background:{bbg};color:{bfg}">{dm_p:.1f}%</span>
-              </div>
-            </div>""", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
+    active_dms = [e for e in dm_eo if is_dm(e) and (
+        dm_lkr_ms.get(e, {}).get('TAR_LKR', 0) != 0 or
+        dm_lkr_ms.get(e, {}).get('ACH_LKR', 0) != 0
+    )]
+    if dm_filter != "ALL":
+        active_dms = [d for d in active_dms if d == dm_filter]
 
-    section(f"DM → RP HIERARCHY — {dm_sel_month} (LKR)")
-    filtered_drm = {k:v for k,v in dm_drm.items()
-                    if (dm_filter=="ALL" or k==dm_filter)
-                    and (dm_lkr_ms.get(k,{}).get("TAR_LKR",0)!=0
-                         or dm_lkr_ms.get(k,{}).get("ACH_LKR",0)!=0)}
-    filtered_drm = {dm:[rp for rp in rps
-                        if dm_lkr_ms.get(rp,{}).get("TAR_LKR",0)!=0
-                        or dm_lkr_ms.get(rp,{}).get("ACH_LKR",0)!=0]
-                    for dm, rps in filtered_drm.items()}
-    render_dm_hierarchy(filtered_drm, dm_lkr_ms, fmt_fn=fmt_lkr, label="LKR")
+    for idx, dm_name in enumerate(active_dms):
+        dm_d   = dm_lkr_ms.get(dm_name, {})
+        dm_t   = dm_d.get("TAR_LKR", 0)
+        dm_a   = dm_d.get("ACH_LKR", 0)
+        dm_p   = dm_d.get("PCT_LKR", 0)
+        dm_v   = dm_d.get("VAR_LKR", 0)
+        dm_ut  = dm_units_ms.get(dm_name, {}).get("TAR", 0)
+        dm_ua  = dm_units_ms.get(dm_name, {}).get("ACH", 0)
+        dm_up  = dm_units_ms.get(dm_name, {}).get("PCT", 0)
 
+        bc    = pct_color(dm_p)
+        bbg   = "#d1fae5" if dm_p >= 100 else "#fef3c7" if dm_p >= 80 else "#fee2e2"
+        bfg   = "#065f46" if dm_p >= 100 else "#92400e" if dm_p >= 80 else "#991b1b"
+        vc    = "#059669" if dm_v >= 0 else "#dc2626"
+        dm_col = PALETTE[idx % len(PALETTE)]
+
+        rp_list = [
+            rp for rp in dm_drm.get(dm_name, [])
+            if (dm_lkr_ms.get(rp, {}).get("TAR_LKR", 0) != 0 or
+                dm_lkr_ms.get(rp, {}).get("ACH_LKR", 0) != 0 or
+                dm_units_ms.get(rp, {}).get("TAR", 0) != 0 or
+                dm_units_ms.get(rp, {}).get("ACH", 0) != 0)
+        ]
+
+        # Build RP rows HTML
+        rp_html = ""
+        rp_tar_sum_lkr = rp_ach_sum_lkr = 0
+        rp_tar_sum_u   = rp_ach_sum_u   = 0
+
+        for rp in rp_list:
+            rl = dm_lkr_ms.get(rp, {})
+            ru = dm_units_ms.get(rp, {})
+            rp_t  = rl.get("TAR_LKR", 0); rp_a = rl.get("ACH_LKR", 0)
+            rp_v  = rl.get("VAR_LKR", 0);  rp_p = rl.get("PCT_LKR", 0)
+            rp_ut = ru.get("TAR", 0);       rp_ua = ru.get("ACH", 0)
+            rp_up = ru.get("PCT", 0)
+            rc    = pct_color(rp_p)
+            rb    = pct_badge(rp_p)
+            rvc   = "#059669" if rp_v >= 0 else "#dc2626"
+            rp_tar_sum_lkr += rp_t; rp_ach_sum_lkr += rp_a
+            rp_tar_sum_u   += rp_ut; rp_ach_sum_u   += rp_ua
+
+            rp_html += f"""
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 1.4rem;
+                        border-bottom:1px solid #f1f5f9;background:#fff;flex-wrap:wrap">
+              <div style="width:8px;height:8px;border-radius:50%;background:{rc};flex-shrink:0"></div>
+              <div style="flex:2;min-width:120px;font-size:.83rem;font-weight:600;color:#1e293b">{rp}</div>
+
+              <div style="flex:1;min-width:90px">
+                <div style="font-size:.6rem;color:#94a3b8;text-transform:uppercase;font-weight:700;margin-bottom:2px">LKR Target</div>
+                <div style="font-size:.82rem;font-weight:600;color:#334155">{fmt_lkr(rp_t)}</div>
+              </div>
+              <div style="flex:1;min-width:90px">
+                <div style="font-size:.6rem;color:#94a3b8;text-transform:uppercase;font-weight:700;margin-bottom:2px">LKR Ach</div>
+                <div style="font-size:.82rem;font-weight:700;color:{rc}">{fmt_lkr(rp_a)}</div>
+              </div>
+              <div style="flex:1;min-width:80px">
+                <div style="font-size:.6rem;color:#94a3b8;text-transform:uppercase;font-weight:700;margin-bottom:2px">LKR Var</div>
+                <div style="font-size:.8rem;font-weight:600;color:{rvc}">{"+" if rp_v >= 0 else ""}{fmt_lkr(rp_v)}</div>
+              </div>
+
+              <div style="flex:1;min-width:70px">
+                <div style="font-size:.6rem;color:#94a3b8;text-transform:uppercase;font-weight:700;margin-bottom:2px">Unit TAR</div>
+                <div style="font-size:.82rem;font-weight:600;color:#334155">{fmt_n(rp_ut)}</div>
+              </div>
+              <div style="flex:1;min-width:70px">
+                <div style="font-size:.6rem;color:#94a3b8;text-transform:uppercase;font-weight:700;margin-bottom:2px">Unit ACH</div>
+                <div style="font-size:.82rem;font-weight:700;color:{rc}">{fmt_n(rp_ua)}</div>
+              </div>
+
+              <div style="flex:1.5;min-width:100px">
+                <div style="background:#f1f5f9;border-radius:999px;height:7px;margin-bottom:4px">
+                  <div style="width:{min(rp_p,100):.1f}%;height:100%;background:{rc};border-radius:999px;opacity:.85"></div>
+                </div>
+              </div>
+              <div style="flex-shrink:0">
+                <span style="font-size:.72rem;font-weight:800;padding:3px 10px;border-radius:999px;
+                             background:{'#d1fae5' if rp_p>=100 else '#fef3c7' if rp_p>=80 else '#fee2e2'};
+                             color:{'#065f46' if rp_p>=100 else '#92400e' if rp_p>=80 else '#991b1b'}">{rp_p:.1f}%</span>
+              </div>
+            </div>"""
+
+        # Rollup footer
+        roll_lkr_pct = (rp_ach_sum_lkr / rp_tar_sum_lkr * 100) if rp_tar_sum_lkr else 0
+        roll_u_pct   = (rp_ach_sum_u   / rp_tar_sum_u   * 100) if rp_tar_sum_u   else 0
+        match_note = ("✓ DM = Σ RP" if abs(dm_t - rp_tar_sum_lkr) < 10
+                      else f"⚠ DM {fmt_lkr(dm_t)} ≠ Σ RP {fmt_lkr(rp_tar_sum_lkr)}")
+
+        rollup_html = f"""
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 1.4rem;
+                    background:#f0f9ff;border-top:2px solid #bae6fd;flex-wrap:wrap;
+                    font-size:.78rem;font-weight:700;color:#0369a1">
+          <div style="width:8px;height:8px;border-radius:50%;background:#3b82f6;flex-shrink:0"></div>
+          <div style="flex:2;min-width:120px">∑ RP Rollup
+            <span style="font-size:.68rem;font-weight:600;color:#0284c7;margin-left:8px">{match_note}</span>
+          </div>
+          <div style="flex:1;min-width:90px">{fmt_lkr(rp_tar_sum_lkr)}</div>
+          <div style="flex:1;min-width:90px">{fmt_lkr(rp_ach_sum_lkr)}</div>
+          <div style="flex:1;min-width:80px;color:{'#059669' if rp_ach_sum_lkr>=rp_tar_sum_lkr else '#dc2626'}">
+            {"+" if rp_ach_sum_lkr-rp_tar_sum_lkr>=0 else ""}{fmt_lkr(rp_ach_sum_lkr-rp_tar_sum_lkr)}</div>
+          <div style="flex:1;min-width:70px">{fmt_n(rp_tar_sum_u)}</div>
+          <div style="flex:1;min-width:70px">{fmt_n(rp_ach_sum_u)}</div>
+          <div style="flex:1.5;min-width:100px;font-size:.72rem">LKR {roll_lkr_pct:.1f}% · Units {roll_u_pct:.1f}%</div>
+          <div style="flex-shrink:0"></div>
+        </div>"""
+
+        # Full DM block with embedded RP rows
+        st.markdown(f"""
+        <div style="border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;
+                    box-shadow:0 3px 14px rgba(0,0,0,0.07);margin-bottom:1.8rem">
+
+          <!-- DM Header -->
+          <div style="background:linear-gradient(135deg,#0d1b2a 0%,#112240 55%,#1d4ed8 100%);
+                      padding:1.1rem 1.4rem;border-left:5px solid {dm_col}">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+              <div>
+                <div style="font-size:.6rem;font-weight:700;color:rgba(255,255,255,.4);
+                            text-transform:uppercase;letter-spacing:.12em;margin-bottom:3px">District Manager</div>
+                <div style="font-size:1.05rem;font-weight:800;color:#f0f6ff">👤 {dm_name}</div>
+                <div style="font-size:.68rem;color:#93c5fd;margin-top:3px;font-family:monospace">
+                  = {" + ".join(rp_list) if rp_list else "No RP sub-teams"}</div>
+              </div>
+              <div style="display:flex;gap:0;border:1px solid rgba(255,255,255,.1);border-radius:10px;overflow:hidden">
+                <div style="padding:.6rem 1rem;border-right:1px solid rgba(255,255,255,.1)">
+                  <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:3px">LKR Target</div>
+                  <div style="font-size:.95rem;font-weight:700;color:#cbd5e1">{fmt_lkr(dm_t)}</div>
+                </div>
+                <div style="padding:.6rem 1rem;border-right:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04)">
+                  <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:3px">LKR Achievement</div>
+                  <div style="font-size:.95rem;font-weight:700;color:{bc}">{fmt_lkr(dm_a)}</div>
+                </div>
+                <div style="padding:.6rem 1rem;border-right:1px solid rgba(255,255,255,.1)">
+                  <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:3px">Unit Target</div>
+                  <div style="font-size:.95rem;font-weight:700;color:#cbd5e1">{fmt_n(dm_ut)}</div>
+                </div>
+                <div style="padding:.6rem 1rem;border-right:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04)">
+                  <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:3px">Unit Achievement</div>
+                  <div style="font-size:.95rem;font-weight:700;color:{pct_color(dm_up)}">{fmt_n(dm_ua)}</div>
+                </div>
+                <div style="padding:.6rem 1rem;display:flex;align-items:center;gap:8px">
+                  <div>
+                    <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:3px">LKR Ach %</div>
+                    <span style="font-size:.9rem;font-weight:800;padding:4px 12px;border-radius:8px;background:{bbg};color:{bfg}">{dm_p:.1f}%</span>
+                  </div>
+                  <div>
+                    <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:3px">Unit Ach %</div>
+                    <span style="font-size:.9rem;font-weight:800;padding:4px 12px;border-radius:8px;
+                                 background:{'#d1fae5' if dm_up>=100 else '#fef3c7' if dm_up>=80 else '#fee2e2'};
+                                 color:{'#065f46' if dm_up>=100 else '#92400e' if dm_up>=80 else '#991b1b'}">{dm_up:.1f}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- DM Progress bar -->
+            <div style="margin-top:10px;background:rgba(255,255,255,.1);border-radius:999px;height:5px;overflow:hidden">
+              <div style="width:{min(dm_p,100):.1f}%;height:100%;background:{bc};border-radius:999px"></div>
+            </div>
+          </div>
+
+          <!-- RP Sub-header -->
+          <div style="display:flex;align-items:center;gap:10px;padding:6px 1.4rem;
+                      background:#f8fafc;border-bottom:2px solid #e2e8f0;flex-wrap:wrap">
+            <div style="width:8px"></div>
+            <div style="flex:2;min-width:120px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Sales Rep</div>
+            <div style="flex:1;min-width:90px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">LKR Target</div>
+            <div style="flex:1;min-width:90px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">LKR Ach</div>
+            <div style="flex:1;min-width:80px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">LKR Var</div>
+            <div style="flex:1;min-width:70px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Unit TAR</div>
+            <div style="flex:1;min-width:70px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Unit ACH</div>
+            <div style="flex:1.5;min-width:100px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Progress</div>
+            <div style="flex-shrink:0;width:60px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase;text-align:center">Ach %</div>
+          </div>
+
+          <!-- RP Rows -->
+          {''.join([rp_html]) if rp_list else
+           '<div style="padding:1rem 1.4rem;color:#94a3b8;font-size:.83rem;font-style:italic">No RP sub-teams.</div>'}
+
+          <!-- Rollup Footer -->
+          {rollup_html if rp_list else ""}
+
+        </div>
+        """, unsafe_allow_html=True)
+
+    # DM Trend chart (unchanged)
     if dm_trend:
         section("DM TREND CHART")
         fig_dml = px.line(pd.DataFrame(dm_trend), x="Month", y="ACH", color="DM", markers=True,
