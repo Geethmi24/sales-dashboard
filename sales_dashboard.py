@@ -1,16 +1,9 @@
 """
-Universal Sales Intelligence Hub — v12.0
-Fixed universal Excel parsing — works with ANY Excel file in this format:
-  Row 0: Month name (col A), entity names from col E onwards (every 2 cols)
-  Row 1: # (col A), PRODUCT (col B), TAR/ACH headers per entity
-  Rows 2+: Product rows — product name in col B, TAR in col E (TOTAL entity)
-  TOTAL row: col B = 'TOTAL', col E onwards = LKR values per entity
-
-Key fixes vs v11:
-  - find_total_row: scans cols 4-9 for any value > 100,000 (not just col E)
-  - find_product_rows: TAR must be numeric > 0 in col E (TOTAL column)
-  - MAR / empty sheets: gracefully skipped when no data filled in
-  - Header format: handles both "MARCH / Total Division" style AND "APRIL" style row 0
+Universal Sales Intelligence Hub — v12.1
+Fixed:
+  - parse_excel returns exactly 6 values (removed all_f_pct)
+  - unpack line matches
+  - DM Breakdown tab shows all RPs inline with LKR + Units
 """
 
 import streamlit as st
@@ -96,49 +89,6 @@ html,body,[class*="css"]{font-family:'Plus Jakarta Sans',sans-serif;}
 .ach-pct-badge.green{background:#dcfce7;color:#15803d;}.ach-pct-badge.amber{background:#fef3c7;color:#92400e;}.ach-pct-badge.red{background:#fee2e2;color:#b91c1c;}
 .ach-header{display:flex;align-items:center;gap:12px;padding:6px 16px;margin-bottom:4px;font-size:.68rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;}
 
-.dm-block{border:1px solid #e2e8f0;border-radius:16px;margin-bottom:1.5rem;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.05);}
-.dm-header{background:linear-gradient(135deg,#1e3a5f,#1d4ed8);padding:1rem 1.4rem;display:flex;align-items:center;justify-content:space-between;}
-.dm-header-left{display:flex;align-items:center;gap:12px;}
-.dm-name{font-size:1rem;font-weight:800;color:#fff;}
-.dm-formula{font-size:.72rem;color:#93c5fd;margin-top:2px;font-family:monospace;}
-.dm-kpis{display:flex;gap:16px;}
-.dm-kpi{text-align:right;}
-.dm-kpi-label{font-size:.65rem;font-weight:700;color:#93c5fd;text-transform:uppercase;}
-.dm-kpi-value{font-size:1rem;font-weight:800;color:#fff;}
-.dm-kpi-pct{font-size:.75rem;font-weight:700;padding:2px 8px;border-radius:999px;display:inline-block;margin-top:2px;}
-.dm-kpi-pct.green{background:rgba(34,197,94,.25);color:#4ade80;}.dm-kpi-pct.amber{background:rgba(245,158,11,.25);color:#fbbf24;}.dm-kpi-pct.red{background:rgba(239,68,68,.25);color:#f87171;}
-.dm-rp-list{background:#fff;}
-.dm-rp-row{display:flex;align-items:center;gap:12px;padding:10px 1.4rem;border-bottom:1px solid #f8fafc;}
-.dm-rp-row:last-child{border-bottom:none;}
-.dm-rp-row:hover{background:#f8fafc;}
-.rp-bullet{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
-.rp-name{font-size:.83rem;font-weight:600;color:#1e293b;flex:1;}
-.rp-tar{font-size:.78rem;color:#94a3b8;width:110px;text-align:right;flex-shrink:0;}
-.rp-ach{font-size:.78rem;font-weight:700;width:110px;text-align:right;flex-shrink:0;}
-.rp-var{font-size:.78rem;font-weight:700;width:100px;text-align:right;flex-shrink:0;}
-.rp-pct-badge{font-size:.7rem;font-weight:800;padding:2px 8px;border-radius:999px;width:54px;text-align:center;flex-shrink:0;}
-.rp-pct-badge.green{background:#dcfce7;color:#15803d;}.rp-pct-badge.amber{background:#fef3c7;color:#92400e;}.rp-pct-badge.red{background:#fee2e2;color:#b91c1c;}
-.rp-track{flex:1.5;background:#f1f5f9;border-radius:999px;height:6px;overflow:hidden;min-width:60px;}
-.rp-fill{height:100%;border-radius:999px;}
-.dm-rp-header{display:flex;align-items:center;gap:12px;padding:6px 1.4rem;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:.65rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;}
-.dm-totals-row{display:flex;align-items:center;gap:12px;padding:10px 1.4rem;background:#f0f9ff;border-top:2px solid #bae6fd;font-size:.78rem;font-weight:700;color:#0369a1;}
-
-.cum-matrix-wrap{overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,.05);}
-.cum-matrix-table{width:100%;border-collapse:collapse;font-size:.8rem;}
-.cum-matrix-table th{background:#1e3a5f;color:#e2e8f0;font-weight:700;padding:10px 14px;text-align:center;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;position:sticky;top:0;}
-.cum-matrix-table th.entity-col{text-align:left;background:#0f172a;min-width:160px;}
-.cum-matrix-table td{padding:9px 14px;border-bottom:1px solid #f1f5f9;white-space:nowrap;}
-.cum-matrix-table td.entity-name{font-weight:700;color:#1e293b;background:#fafafa;border-right:2px solid #e2e8f0;position:sticky;left:0;}
-.cum-matrix-table tr:hover td{background:#f8fafc;}
-.cum-matrix-table tr:hover td.entity-name{background:#f1f5f9;}
-.cum-matrix-table td.pct-cell{text-align:center;font-weight:700;border-radius:6px;}
-.pct-green{background:#dcfce7;color:#15803d;}
-.pct-amber{background:#fef3c7;color:#92400e;}
-.pct-red{background:#fee2e2;color:#b91c1c;}
-.pct-zero{background:#f1f5f9;color:#94a3b8;}
-.cum-matrix-table .total-row td{background:#dbeafe !important;font-weight:800;color:#1e40af;border-top:2px solid #93c5fd;}
-.cum-matrix-table .total-row td.entity-name{background:#bfdbfe !important;}
-
 .landing{display:flex;flex-direction:column;align-items:center;padding:4rem 2rem 3rem;text-align:center;}
 .landing-logo{font-size:3.5rem;margin-bottom:1.2rem;}
 .landing h2{font-size:1.5rem;font-weight:800;color:#1e293b;margin-bottom:.6rem;}
@@ -218,16 +168,10 @@ def kpi_card(col, label, value, icon, color, badge_text=None, badge_cls="neu", s
 # ══════════════════════════════════════════════════════
 
 def find_total_row(raw):
-    """
-    Find the FIRST TOTAL row that has a large LKR number.
-    Scans cols 4-9 for any value > 100,000 to handle different column layouts.
-    Skips TOTAL rows with all-zero/NaN values (empty/unfilled months like MAR).
-    """
     for i in range(2, min(80, raw.shape[0])):
         val_b = str(raw.iloc[i, 1]).strip() if pd.notna(raw.iloc[i, 1]) else ''
         if val_b != 'TOTAL':
             continue
-        # Check cols 4-9 for any large LKR value
         for col in range(4, min(raw.shape[1], 10)):
             val = raw.iloc[i, col]
             if pd.notna(val):
@@ -236,14 +180,10 @@ def find_total_row(raw):
                         return i
                 except:
                     pass
-    return None  # No filled TOTAL row — sheet is empty/unfilled, skip it
+    return None
 
 
 def find_product_rows(raw, total_row):
-    """
-    Find all product data rows between row 2 and the TOTAL row.
-    A valid product row has a string name in col B and numeric TAR > 0 in col E (TOTAL column).
-    """
     prod_rows = []
     skip_names = {'', 'nan', 'TOTAL', '0', 'PRODUCT', '#'}
     for r in range(2, total_row):
@@ -278,26 +218,20 @@ def parse_excel(file_obj):
         if raw.shape[0] < 6 or raw.shape[1] < 6:
             continue
 
-        # ── Find TOTAL row (LKR summary row) ─────────────────────
         lkr_row_idx = find_total_row(raw)
         if lkr_row_idx is None:
-            continue  # Sheet has no filled data (e.g. MAR not yet filled)
+            continue
 
-        # ── Find product rows ─────────────────────────────────────
         prod_rows = find_product_rows(raw, lkr_row_idx)
         if not prod_rows:
             continue
 
-        # ── Parse entity columns from Row 0 ──────────────────────
-        # Entity names appear in Row 0 at every even column from col 4 onwards
-        # Row 1 has TAR/ACH headers confirming each pair
         entity_cols = {}
         name_count  = {}
         for j in range(4, raw.shape[1] - 1, 2):
             name_cell = raw.iloc[0, j] if j < raw.shape[1] else None
             if pd.isna(name_cell) or str(name_cell).strip() in ('', 'nan'):
                 continue
-            # Confirm this column is a TAR column (row 1 = 'TAR' or at least numeric data exists)
             hdr = str(raw.iloc[1, j]).strip() if pd.notna(raw.iloc[1, j]) else ''
             if hdr not in ('TAR', ''):
                 continue
@@ -316,8 +250,7 @@ def parse_excel(file_obj):
         ordered_entities = list(entity_cols.keys())
         all_eo[sheet] = ordered_entities
 
-        # ── Unit data per entity ──────────────────────────────────
-        units_ms         = {}
+        units_ms          = {}
         prod_entity_sheet = {}
 
         for ename, tc in entity_cols.items():
@@ -341,7 +274,6 @@ def parse_excel(file_obj):
         all_units[sheet]       = units_ms
         all_prod_entity[sheet] = prod_entity_sheet
 
-        # ── LKR data from the TOTAL row ───────────────────────────
         lkr_ms = {}
         for ename, tc in entity_cols.items():
             ac = tc + 1
@@ -356,7 +288,6 @@ def parse_excel(file_obj):
                                   VAR_LKR=var_lkr, PCT_LKR=pct_lkr)
         all_lkr[sheet] = lkr_ms
 
-        # ── DM → RP hierarchy ─────────────────────────────────────
         dm_rp   = {}
         cur_dm  = None
         for ename in ordered_entities:
@@ -369,7 +300,6 @@ def parse_excel(file_obj):
                 dm_rp[cur_dm].append(ename)
         all_dm_rp[sheet] = dm_rp
 
-        # ── Full product rows DataFrame ───────────────────────────
         prod_rows_list = []
         for r in prod_rows:
             pname = str(raw.iloc[r, 1]).strip()
@@ -389,6 +319,7 @@ def parse_excel(file_obj):
                 ))
         all_prod[sheet] = pd.DataFrame(prod_rows_list) if prod_rows_list else pd.DataFrame()
 
+    # returns exactly 6 values
     return all_lkr, all_units, all_dm_rp, all_eo, all_prod, all_prod_entity
 
 
@@ -476,106 +407,6 @@ def achievement_rows_ui(rows: list, fmt_fn=fmt_n):
     st.markdown(header + body, unsafe_allow_html=True)
 
 
-def render_dm_hierarchy(dm_rp_sheet, data_ms, fmt_fn=fmt_n, label="units"):
-    if not dm_rp_sheet:
-        st.info("No DM → RP mapping found.")
-        return
-    for idx, (dm, rp_list) in enumerate(dm_rp_sheet.items()):
-        dm_d   = data_ms.get(dm, {})
-        dm_tar = dm_d.get('TAR', dm_d.get('TAR_LKR', 0))
-        dm_ach = dm_d.get('ACH', dm_d.get('ACH_LKR', 0))
-        dm_var = dm_d.get('VAR', dm_d.get('VAR_LKR', 0))
-        dm_pct = dm_d.get('PCT', dm_d.get('PCT_LKR', 0))
-        dm_col = PALETTE[idx % len(PALETTE)]
-        pct_c  = pct_badge(dm_pct)
-        rp_formula = " + ".join(rp_list) if rp_list else "No RP sub-teams"
-
-        html = f"""
-        <div class="dm-block">
-          <div class="dm-header" style="border-left:5px solid {dm_col}">
-            <div class="dm-header-left">
-              <div>
-                <div class="dm-name">👤 {dm}</div>
-                <div class="dm-formula">= {rp_formula}</div>
-              </div>
-            </div>
-            <div class="dm-kpis">
-              <div class="dm-kpi">
-                <div class="dm-kpi-label">Target ({label})</div>
-                <div class="dm-kpi-value">{fmt_fn(dm_tar)}</div>
-              </div>
-              <div class="dm-kpi">
-                <div class="dm-kpi-label">Achievement ({label})</div>
-                <div class="dm-kpi-value">{fmt_fn(dm_ach)}</div>
-                <span class="dm-kpi-pct {pct_c}">{dm_pct:.1f}%</span>
-              </div>
-              <div class="dm-kpi">
-                <div class="dm-kpi-label">Variance</div>
-                <div class="dm-kpi-value" style="color:{'#4ade80' if dm_var>=0 else '#f87171'}">
-                  {'+' if dm_var>=0 else ''}{fmt_fn(dm_var)}
-                </div>
-              </div>
-            </div>
-          </div>"""
-
-        if rp_list:
-            html += """
-          <div class="dm-rp-header">
-            <div style="width:10px"></div>
-            <div style="flex:1">RP / Sales Rep</div>
-            <div style="flex:1.5">Progress</div>
-            <div style="width:110px;text-align:right">Target</div>
-            <div style="width:110px;text-align:right">Achievement</div>
-            <div style="width:100px;text-align:right">Variance</div>
-            <div style="width:54px;text-align:center">Ach %</div>
-          </div>
-          <div class="dm-rp-list">"""
-            rp_tar_sum = rp_ach_sum = 0
-            for rp in rp_list:
-                rd   = data_ms.get(rp, {})
-                rp_t = rd.get('TAR', rd.get('TAR_LKR', 0))
-                rp_a = rd.get('ACH', rd.get('ACH_LKR', 0))
-                rp_v = rd.get('VAR', rd.get('VAR_LKR', 0))
-                rp_p = rd.get('PCT', rd.get('PCT_LKR', 0))
-                rc   = pct_color(rp_p)
-                rb   = pct_badge(rp_p)
-                rp_tar_sum += rp_t
-                rp_ach_sum += rp_a
-                html += f"""
-            <div class="dm-rp-row">
-              <div class="rp-bullet" style="background:{rc}"></div>
-              <div class="rp-name">{rp}</div>
-              <div class="rp-track">
-                <div class="rp-fill" style="width:{min(rp_p,100):.1f}%;background:{rc};opacity:.8"></div>
-              </div>
-              <div class="rp-tar">{fmt_fn(rp_t)}</div>
-              <div class="rp-ach" style="color:{rc}">{fmt_fn(rp_a)}</div>
-              <div class="rp-var" style="color:{rc}">{'+' if rp_v>=0 else ''}{fmt_fn(rp_v)}</div>
-              <div class="rp-pct-badge {rb}">{rp_p:.1f}%</div>
-            </div>"""
-            roll_pct   = (rp_ach_sum / rp_tar_sum * 100) if rp_tar_sum else 0
-            match_note = ("✓ DM = Σ RP" if abs(dm_tar - rp_tar_sum) < 10
-                          else f"⚠ DM {fmt_fn(dm_tar)} ≠ Σ RP {fmt_fn(rp_tar_sum)}")
-            html += f"""
-          </div>
-          <div class="dm-totals-row">
-            <div style="width:10px"></div>
-            <div style="flex:1">∑ RP Rollup → {dm} &nbsp;
-              <span style="color:#0284c7;font-size:.7rem">{match_note}</span></div>
-            <div style="flex:1.5"></div>
-            <div style="width:110px;text-align:right">{fmt_fn(rp_tar_sum)}</div>
-            <div style="width:110px;text-align:right">{fmt_fn(rp_ach_sum)}</div>
-            <div style="width:100px;text-align:right;color:{'#0369a1' if rp_ach_sum>=rp_tar_sum else '#dc2626'}">
-              {'+' if rp_ach_sum-rp_tar_sum>=0 else ''}{fmt_fn(rp_ach_sum-rp_tar_sum)}
-            </div>
-            <div style="width:54px;text-align:center;font-weight:800;color:#0369a1">{roll_pct:.1f}%</div>
-          </div>"""
-        else:
-            html += '<div class="dm-rp-list"><div class="dm-rp-row" style="color:#94a3b8;font-size:.8rem;font-style:italic">No RP sub-teams.</div></div>'
-        html += "</div>"
-        st.markdown(html, unsafe_allow_html=True)
-
-
 def donut_chart(label_vals, center_label, key, pal_offset=0):
     items = [(k, v) for k, v in label_vals.items() if v and v > 0]
     if not items:
@@ -626,6 +457,7 @@ with st.sidebar:
         dash_title = selected_file_name.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').upper()
 
         with st.spinner("Parsing Excel…"):
+            # parse_excel returns exactly 6 values
             (all_lkr, all_units, all_dm_rp,
              all_eo, all_prod, all_prod_entity) = parse_excel(uploaded_file)
 
@@ -683,7 +515,7 @@ with st.sidebar:
         dash_title = "Sales Intelligence Hub"
 
     st.markdown("---")
-    st.markdown("<small style='color:#334155;font-size:.68rem'>Universal Sales Hub · v12.0</small>",
+    st.markdown("<small style='color:#334155;font-size:.68rem'>Universal Sales Hub · v12.1</small>",
                 unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
@@ -748,13 +580,13 @@ tab2, tab1, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 # ║  TAB — OVERVIEW             ║
 # ╚══════════════════════════════╝
 with tab1:
-    ov_month   = st.selectbox("Select Month", month_list,
-                               index=month_list.index(sel_month), key="overview_month")
-    ov_lkr_ms  = all_lkr[ov_month]
-    ov_units_ms= all_units[ov_month]
-    ov_drm     = all_dm_rp[ov_month]
-    ov_eo      = all_eo[ov_month]
-    ov_dm_keys = [e for e in ov_eo if is_dm(e)]
+    ov_month    = st.selectbox("Select Month", month_list,
+                                index=month_list.index(sel_month), key="overview_month")
+    ov_lkr_ms   = all_lkr[ov_month]
+    ov_units_ms = all_units[ov_month]
+    ov_drm      = all_dm_rp[ov_month]
+    ov_eo       = all_eo[ov_month]
+    ov_dm_keys  = [e for e in ov_eo if is_dm(e)]
 
     ov_tot_lkr = ov_lkr_ms.get('TOTAL', {})
     ov_tar_lkr = ov_tot_lkr.get('TAR_LKR', 0)
@@ -1003,10 +835,10 @@ with tab2:
 with tab3:
     dm_sel_month = st.selectbox("Select Month", month_list,
         index=month_list.index(sel_month), key="dm_month")
-    dm_lkr_ms = all_lkr[dm_sel_month]
+    dm_lkr_ms   = all_lkr[dm_sel_month]
     dm_units_ms = all_units[dm_sel_month]
-    dm_drm    = all_dm_rp[dm_sel_month]
-    dm_eo     = all_eo[dm_sel_month]
+    dm_drm      = all_dm_rp[dm_sel_month]
+    dm_eo       = all_eo[dm_sel_month]
 
     dm_trend = []
     for m in month_list:
@@ -1035,10 +867,10 @@ with tab3:
         dm_ua  = dm_units_ms.get(dm_name, {}).get("ACH", 0)
         dm_up  = dm_units_ms.get(dm_name, {}).get("PCT", 0)
 
-        bc    = pct_color(dm_p)
-        bbg   = "#d1fae5" if dm_p >= 100 else "#fef3c7" if dm_p >= 80 else "#fee2e2"
-        bfg   = "#065f46" if dm_p >= 100 else "#92400e" if dm_p >= 80 else "#991b1b"
-        vc    = "#059669" if dm_v >= 0 else "#dc2626"
+        bc     = pct_color(dm_p)
+        bbg    = "#d1fae5" if dm_p >= 100 else "#fef3c7" if dm_p >= 80 else "#fee2e2"
+        bfg    = "#065f46" if dm_p >= 100 else "#92400e" if dm_p >= 80 else "#991b1b"
+        vc     = "#059669" if dm_v >= 0 else "#dc2626"
         dm_col = PALETTE[idx % len(PALETTE)]
 
         rp_list = [
@@ -1049,30 +881,30 @@ with tab3:
                 dm_units_ms.get(rp, {}).get("ACH", 0) != 0)
         ]
 
-        # Build RP rows HTML
-        rp_html = ""
-        rp_tar_sum_lkr = rp_ach_sum_lkr = 0
-        rp_tar_sum_u   = rp_ach_sum_u   = 0
+        # ── Build RP rows HTML ─────────────────────────────────
+        rp_rows_html   = ""
+        rp_tar_sum_lkr = rp_ach_sum_lkr = 0.0
+        rp_tar_sum_u   = rp_ach_sum_u   = 0.0
 
         for rp in rp_list:
-            rl = dm_lkr_ms.get(rp, {})
-            ru = dm_units_ms.get(rp, {})
+            rl   = dm_lkr_ms.get(rp, {})
+            ru   = dm_units_ms.get(rp, {})
             rp_t  = rl.get("TAR_LKR", 0); rp_a = rl.get("ACH_LKR", 0)
             rp_v  = rl.get("VAR_LKR", 0);  rp_p = rl.get("PCT_LKR", 0)
             rp_ut = ru.get("TAR", 0);       rp_ua = ru.get("ACH", 0)
             rp_up = ru.get("PCT", 0)
             rc    = pct_color(rp_p)
-            rb    = pct_badge(rp_p)
             rvc   = "#059669" if rp_v >= 0 else "#dc2626"
-            rp_tar_sum_lkr += rp_t; rp_ach_sum_lkr += rp_a
+            rpbg  = "#d1fae5" if rp_p >= 100 else "#fef3c7" if rp_p >= 80 else "#fee2e2"
+            rpfg  = "#065f46" if rp_p >= 100 else "#92400e" if rp_p >= 80 else "#991b1b"
+            rp_tar_sum_lkr += rp_t;  rp_ach_sum_lkr += rp_a
             rp_tar_sum_u   += rp_ut; rp_ach_sum_u   += rp_ua
 
-            rp_html += f"""
+            rp_rows_html += f"""
             <div style="display:flex;align-items:center;gap:10px;padding:10px 1.4rem;
                         border-bottom:1px solid #f1f5f9;background:#fff;flex-wrap:wrap">
               <div style="width:8px;height:8px;border-radius:50%;background:{rc};flex-shrink:0"></div>
-              <div style="flex:2;min-width:120px;font-size:.83rem;font-weight:600;color:#1e293b">{rp}</div>
-
+              <div style="flex:2;min-width:130px;font-size:.83rem;font-weight:600;color:#1e293b">{rp}</div>
               <div style="flex:1;min-width:90px">
                 <div style="font-size:.6rem;color:#94a3b8;text-transform:uppercase;font-weight:700;margin-bottom:2px">LKR Target</div>
                 <div style="font-size:.82rem;font-weight:600;color:#334155">{fmt_lkr(rp_t)}</div>
@@ -1083,9 +915,8 @@ with tab3:
               </div>
               <div style="flex:1;min-width:80px">
                 <div style="font-size:.6rem;color:#94a3b8;text-transform:uppercase;font-weight:700;margin-bottom:2px">LKR Var</div>
-                <div style="font-size:.8rem;font-weight:600;color:{rvc}">{"+" if rp_v >= 0 else ""}{fmt_lkr(rp_v)}</div>
+                <div style="font-size:.8rem;font-weight:600;color:{rvc}">{"+" if rp_v>=0 else ""}{fmt_lkr(rp_v)}</div>
               </div>
-
               <div style="flex:1;min-width:70px">
                 <div style="font-size:.6rem;color:#94a3b8;text-transform:uppercase;font-weight:700;margin-bottom:2px">Unit TAR</div>
                 <div style="font-size:.82rem;font-weight:600;color:#334155">{fmt_n(rp_ut)}</div>
@@ -1094,7 +925,6 @@ with tab3:
                 <div style="font-size:.6rem;color:#94a3b8;text-transform:uppercase;font-weight:700;margin-bottom:2px">Unit ACH</div>
                 <div style="font-size:.82rem;font-weight:700;color:{rc}">{fmt_n(rp_ua)}</div>
               </div>
-
               <div style="flex:1.5;min-width:100px">
                 <div style="background:#f1f5f9;border-radius:999px;height:7px;margin-bottom:4px">
                   <div style="width:{min(rp_p,100):.1f}%;height:100%;background:{rc};border-radius:999px;opacity:.85"></div>
@@ -1102,41 +932,43 @@ with tab3:
               </div>
               <div style="flex-shrink:0">
                 <span style="font-size:.72rem;font-weight:800;padding:3px 10px;border-radius:999px;
-                             background:{'#d1fae5' if rp_p>=100 else '#fef3c7' if rp_p>=80 else '#fee2e2'};
-                             color:{'#065f46' if rp_p>=100 else '#92400e' if rp_p>=80 else '#991b1b'}">{rp_p:.1f}%</span>
+                             background:{rpbg};color:{rpfg}">{rp_p:.1f}%</span>
               </div>
             </div>"""
 
-        # Rollup footer
+        # ── Rollup footer ──────────────────────────────────────
         roll_lkr_pct = (rp_ach_sum_lkr / rp_tar_sum_lkr * 100) if rp_tar_sum_lkr else 0
         roll_u_pct   = (rp_ach_sum_u   / rp_tar_sum_u   * 100) if rp_tar_sum_u   else 0
-        match_note = ("✓ DM = Σ RP" if abs(dm_t - rp_tar_sum_lkr) < 10
-                      else f"⚠ DM {fmt_lkr(dm_t)} ≠ Σ RP {fmt_lkr(rp_tar_sum_lkr)}")
+        match_note   = ("✓ DM = Σ RP" if abs(dm_t - rp_tar_sum_lkr) < 10
+                        else f"⚠ DM {fmt_lkr(dm_t)} ≠ Σ RP {fmt_lkr(rp_tar_sum_lkr)}")
+        roll_var_lkr = rp_ach_sum_lkr - rp_tar_sum_lkr
+        roll_vc      = "#059669" if roll_var_lkr >= 0 else "#dc2626"
 
         rollup_html = f"""
         <div style="display:flex;align-items:center;gap:10px;padding:10px 1.4rem;
                     background:#f0f9ff;border-top:2px solid #bae6fd;flex-wrap:wrap;
                     font-size:.78rem;font-weight:700;color:#0369a1">
           <div style="width:8px;height:8px;border-radius:50%;background:#3b82f6;flex-shrink:0"></div>
-          <div style="flex:2;min-width:120px">∑ RP Rollup
+          <div style="flex:2;min-width:130px">∑ RP Rollup
             <span style="font-size:.68rem;font-weight:600;color:#0284c7;margin-left:8px">{match_note}</span>
           </div>
           <div style="flex:1;min-width:90px">{fmt_lkr(rp_tar_sum_lkr)}</div>
           <div style="flex:1;min-width:90px">{fmt_lkr(rp_ach_sum_lkr)}</div>
-          <div style="flex:1;min-width:80px;color:{'#059669' if rp_ach_sum_lkr>=rp_tar_sum_lkr else '#dc2626'}">
-            {"+" if rp_ach_sum_lkr-rp_tar_sum_lkr>=0 else ""}{fmt_lkr(rp_ach_sum_lkr-rp_tar_sum_lkr)}</div>
+          <div style="flex:1;min-width:80px;color:{roll_vc}">{"+" if roll_var_lkr>=0 else ""}{fmt_lkr(roll_var_lkr)}</div>
           <div style="flex:1;min-width:70px">{fmt_n(rp_tar_sum_u)}</div>
           <div style="flex:1;min-width:70px">{fmt_n(rp_ach_sum_u)}</div>
-          <div style="flex:1.5;min-width:100px;font-size:.72rem">LKR {roll_lkr_pct:.1f}% · Units {roll_u_pct:.1f}%</div>
-          <div style="flex-shrink:0"></div>
+          <div style="flex:1.5;min-width:100px;font-size:.72rem">
+            LKR {roll_lkr_pct:.1f}% · Units {roll_u_pct:.1f}%</div>
+          <div style="flex-shrink:0;width:68px"></div>
         </div>"""
 
-        # Full DM block with embedded RP rows
+        no_rp_html = '<div style="padding:1rem 1.4rem;color:#94a3b8;font-size:.83rem;font-style:italic">No RP sub-teams.</div>'
+
+        # ── Full DM block ──────────────────────────────────────
         st.markdown(f"""
         <div style="border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;
                     box-shadow:0 3px 14px rgba(0,0,0,0.07);margin-bottom:1.8rem">
 
-          <!-- DM Header -->
           <div style="background:linear-gradient(135deg,#0d1b2a 0%,#112240 55%,#1d4ed8 100%);
                       padding:1.1rem 1.4rem;border-left:5px solid {dm_col}">
             <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
@@ -1164,7 +996,7 @@ with tab3:
                   <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:3px">Unit Achievement</div>
                   <div style="font-size:.95rem;font-weight:700;color:{pct_color(dm_up)}">{fmt_n(dm_ua)}</div>
                 </div>
-                <div style="padding:.6rem 1rem;display:flex;align-items:center;gap:8px">
+                <div style="padding:.6rem 1rem;display:flex;align-items:center;gap:10px">
                   <div>
                     <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:3px">LKR Ach %</div>
                     <span style="font-size:.9rem;font-weight:800;padding:4px 12px;border-radius:8px;background:{bbg};color:{bfg}">{dm_p:.1f}%</span>
@@ -1178,37 +1010,30 @@ with tab3:
                 </div>
               </div>
             </div>
-            <!-- DM Progress bar -->
             <div style="margin-top:10px;background:rgba(255,255,255,.1);border-radius:999px;height:5px;overflow:hidden">
               <div style="width:{min(dm_p,100):.1f}%;height:100%;background:{bc};border-radius:999px"></div>
             </div>
           </div>
 
-          <!-- RP Sub-header -->
           <div style="display:flex;align-items:center;gap:10px;padding:6px 1.4rem;
                       background:#f8fafc;border-bottom:2px solid #e2e8f0;flex-wrap:wrap">
             <div style="width:8px"></div>
-            <div style="flex:2;min-width:120px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Sales Rep</div>
+            <div style="flex:2;min-width:130px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Sales Rep</div>
             <div style="flex:1;min-width:90px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">LKR Target</div>
             <div style="flex:1;min-width:90px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">LKR Ach</div>
             <div style="flex:1;min-width:80px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">LKR Var</div>
             <div style="flex:1;min-width:70px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Unit TAR</div>
             <div style="flex:1;min-width:70px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Unit ACH</div>
             <div style="flex:1.5;min-width:100px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Progress</div>
-            <div style="flex-shrink:0;width:60px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase;text-align:center">Ach %</div>
+            <div style="flex-shrink:0;width:68px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase;text-align:center">Ach %</div>
           </div>
 
-          <!-- RP Rows -->
-          {''.join([rp_html]) if rp_list else
-           '<div style="padding:1rem 1.4rem;color:#94a3b8;font-size:.83rem;font-style:italic">No RP sub-teams.</div>'}
-
-          <!-- Rollup Footer -->
+          {rp_rows_html if rp_list else no_rp_html}
           {rollup_html if rp_list else ""}
 
         </div>
         """, unsafe_allow_html=True)
 
-    # DM Trend chart (unchanged)
     if dm_trend:
         section("DM TREND CHART")
         fig_dml = px.line(pd.DataFrame(dm_trend), x="Month", y="ACH", color="DM", markers=True,
@@ -1300,8 +1125,8 @@ with tab4:
               <div style="display:flex;align-items:center;padding:7px 14px;background:#f8fafc;border-bottom:2px solid #e2e8f0">
                 <div style="width:28px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">#</div>
                 <div style="flex:1.8;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Sales Rep</div>
-                <div style="width:140px;text-align:right;font-size:.6rem;font-weight:700;color:#64748b;text-transform:uppercase">🎯 Target</div>
-                <div style="width:140px;text-align:right;font-size:.6rem;font-weight:700;color:#64748b;text-transform:uppercase">✅ Achievement</div>
+                <div style="width:140px;text-align:right;font-size:.6rem;font-weight:700;color:#64748b;text-transform:uppercase">Target</div>
+                <div style="width:140px;text-align:right;font-size:.6rem;font-weight:700;color:#64748b;text-transform:uppercase">Achievement</div>
                 <div style="width:110px;text-align:right;font-size:.6rem;font-weight:700;color:#64748b;text-transform:uppercase">Variance</div>
                 <div style="flex:1.2;padding:0 12px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Progress</div>
                 <div style="width:62px;text-align:center;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Ach %</div>
@@ -1613,5 +1438,5 @@ with tab7:
 # FOOTER
 # ══════════════════════════════════════════════════════
 st.markdown(
-    f'<div class="dash-footer">Universal Sales Intelligence Hub · {dash_title} · {sel_month} · v12.0</div>',
+    f'<div class="dash-footer">Universal Sales Intelligence Hub · {dash_title} · {sel_month} · v12.1</div>',
     unsafe_allow_html=True)
