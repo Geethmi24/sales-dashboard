@@ -1,16 +1,9 @@
 """
-Universal Sales Intelligence Hub — v12.0
-Fixed universal Excel parsing — works with ANY Excel file in this format:
-  Row 0: Month name (col A), entity names from col E onwards (every 2 cols)
-  Row 1: # (col A), PRODUCT (col B), TAR/ACH headers per entity
-  Rows 2+: Product rows — product name in col B, TAR in col E (TOTAL entity)
-  TOTAL row: col B = 'TOTAL', col E onwards = LKR values per entity
-
-Key fixes vs v11:
-  - find_total_row: scans cols 4-9 for any value > 100,000 (not just col E)
-  - find_product_rows: TAR must be numeric > 0 in col E (TOTAL column)
-  - MAR / empty sheets: gracefully skipped when no data filled in
-  - Header format: handles both "MARCH / Total Division" style AND "APRIL" style row 0
+Universal Sales Intelligence Hub — v14.0 (FIXED)
+Fixed:
+  1. SBDM නැති excel: DMs සියල්ලම පෙනේ
+  2. SBDM ඇති excel: SBDM → DM → RP hierarchy සම්පූර්ණයෙන් පෙනේ
+  3. render_full_hierarchy: data_ms zero-filter bug fix
 """
 
 import streamlit as st
@@ -59,10 +52,11 @@ html,body,[class*="css"]{font-family:'Plus Jakarta Sans',sans-serif;}
 .kpi-card.c-red::after{background:linear-gradient(90deg,#ef4444,#f87171);}
 .kpi-card.c-teal::after{background:linear-gradient(90deg,#14b8a6,#2dd4bf);}
 .kpi-card.c-indigo::after{background:linear-gradient(90deg,#6366f1,#818cf8);}
+.kpi-card.c-orange::after{background:linear-gradient(90deg,#f97316,#fb923c);}
 .kpi-icon-wrap{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.1rem;margin-bottom:12px;}
 .c-blue .kpi-icon-wrap{background:#dbeafe;}.c-green .kpi-icon-wrap{background:#dcfce7;}.c-amber .kpi-icon-wrap{background:#fef3c7;}
 .c-purple .kpi-icon-wrap{background:#ede9fe;}.c-red .kpi-icon-wrap{background:#fee2e2;}.c-teal .kpi-icon-wrap{background:#ccfbf1;}
-.c-indigo .kpi-icon-wrap{background:#e0e7ff;}
+.c-indigo .kpi-icon-wrap{background:#e0e7ff;}.c-orange .kpi-icon-wrap{background:#ffedd5;}
 .kpi-label{font-size:.7rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px;}
 .kpi-value{font-size:1.75rem;font-weight:800;color:#0f172a;line-height:1;letter-spacing:-.03em;}
 .kpi-sub{font-size:.72rem;color:#94a3b8;margin-top:4px;}
@@ -70,118 +64,78 @@ html,body,[class*="css"]{font-family:'Plus Jakarta Sans',sans-serif;}
 .kpi-badge.up{background:#dcfce7;color:#15803d;}.kpi-badge.down{background:#fee2e2;color:#b91c1c;}.kpi-badge.neu{background:#f1f5f9;color:#64748b;}
 
 .card{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:1.3rem 1.4rem .8rem;box-shadow:0 2px 8px rgba(0,0,0,.05);margin-bottom:1rem;}
-.card-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:.3rem;}
-.card-title{font-size:.9rem;font-weight:700;color:#1e293b;}
-.card-sub{font-size:.72rem;color:#94a3b8;margin-top:2px;}
-.card-badge{font-size:.68rem;font-weight:700;padding:3px 10px;border-radius:999px;background:#f1f5f9;color:#64748b;white-space:nowrap;}
+.card-title{font-size:.9rem;font-weight:700;color:#1e293b;margin-bottom:.8rem;}
 
 .sec-div{display:flex;align-items:center;gap:12px;margin:2rem 0 1.2rem;}
 .sec-div-line{flex:1;height:1px;background:#e2e8f0;}
 .sec-div-text{font-size:.72rem;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.1em;white-space:nowrap;}
 
-.insight-strip{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:1.5rem;}
-.insight-pill{background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 16px;font-size:.78rem;color:#475569;display:flex;align-items:center;gap:8px;flex:1;min-width:160px;}
-.insight-pill strong{color:#1e293b;font-weight:700;}
-.insight-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+/* SBDM Block */
+.sbdm-block{border:2px solid #c7d2fe;border-radius:20px;margin-bottom:2rem;overflow:hidden;box-shadow:0 4px 20px rgba(99,102,241,.15);}
+.sbdm-header{background:linear-gradient(135deg,#312e81 0%,#4338ca 60%,#6366f1 100%);padding:1.3rem 1.8rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;}
+.sbdm-tag{font-size:.62rem;font-weight:700;color:#c7d2fe;text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px;}
+.sbdm-name{font-size:1.15rem;font-weight:800;color:#fff;}
+.sbdm-formula{font-size:.68rem;color:#a5b4fc;margin-top:3px;font-family:monospace;}
+.sbdm-kpis{display:flex;gap:0;border:1px solid rgba(255,255,255,.15);border-radius:12px;overflow:hidden;}
+.sbdm-kpi-box{padding:.7rem 1.2rem;border-right:1px solid rgba(255,255,255,.15);}
+.sbdm-kpi-box:last-child{border-right:none;}
+.sbdm-kpi-label{font-size:.58rem;font-weight:700;color:rgba(255,255,255,.5);text-transform:uppercase;margin-bottom:3px;}
+.sbdm-kpi-value{font-size:1rem;font-weight:800;color:#fff;}
+.sbdm-body{background:#f5f3ff;padding:1rem 1.2rem;}
+.sbdm-dm-list{display:flex;flex-direction:column;gap:12px;}
 
-.ach-row{display:flex;align-items:center;gap:12px;padding:10px 16px;border-radius:12px;margin-bottom:8px;border:1px solid #e2e8f0;background:#fff;}
-.ach-row:hover{box-shadow:0 4px 12px rgba(0,0,0,.08);}
-.ach-rank{font-size:.72rem;font-weight:800;color:#94a3b8;width:20px;text-align:center;flex-shrink:0;}
-.ach-name{font-size:.83rem;font-weight:600;color:#1e293b;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.ach-track{flex:2;background:#f1f5f9;border-radius:999px;height:10px;overflow:hidden;}
-.ach-fill{height:100%;border-radius:999px;}
-.ach-tar{font-size:.7rem;color:#94a3b8;width:90px;text-align:right;flex-shrink:0;}
-.ach-ach{font-size:.7rem;font-weight:700;width:90px;text-align:right;flex-shrink:0;}
-.ach-pct-badge{font-size:.72rem;font-weight:800;padding:3px 10px;border-radius:999px;width:58px;text-align:center;flex-shrink:0;}
-.ach-pct-badge.green{background:#dcfce7;color:#15803d;}.ach-pct-badge.amber{background:#fef3c7;color:#92400e;}.ach-pct-badge.red{background:#fee2e2;color:#b91c1c;}
-.ach-header{display:flex;align-items:center;gap:12px;padding:6px 16px;margin-bottom:4px;font-size:.68rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;}
-
-.dm-block{border:1px solid #e2e8f0;border-radius:16px;margin-bottom:1.5rem;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.05);}
-.dm-header{background:linear-gradient(135deg,#1e3a5f,#1d4ed8);padding:1rem 1.4rem;display:flex;align-items:center;justify-content:space-between;}
-.dm-header-left{display:flex;align-items:center;gap:12px;}
+/* DM Block */
+.dm-block{border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06);}
+.dm-header{padding:1rem 1.4rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;}
 .dm-name{font-size:1rem;font-weight:800;color:#fff;}
-.dm-formula{font-size:.72rem;color:#93c5fd;margin-top:2px;font-family:monospace;}
-.dm-kpis{display:flex;gap:16px;}
-.dm-kpi{text-align:right;}
-.dm-kpi-label{font-size:.65rem;font-weight:700;color:#93c5fd;text-transform:uppercase;}
-.dm-kpi-value{font-size:1rem;font-weight:800;color:#fff;}
-.dm-kpi-pct{font-size:.75rem;font-weight:700;padding:2px 8px;border-radius:999px;display:inline-block;margin-top:2px;}
-.dm-kpi-pct.green{background:rgba(34,197,94,.25);color:#4ade80;}.dm-kpi-pct.amber{background:rgba(245,158,11,.25);color:#fbbf24;}.dm-kpi-pct.red{background:rgba(239,68,68,.25);color:#f87171;}
-.dm-rp-list{background:#fff;}
-.dm-rp-row{display:flex;align-items:center;gap:12px;padding:10px 1.4rem;border-bottom:1px solid #f8fafc;}
-.dm-rp-row:last-child{border-bottom:none;}
-.dm-rp-row:hover{background:#f8fafc;}
-.rp-bullet{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
-.rp-name{font-size:.83rem;font-weight:600;color:#1e293b;flex:1;}
-.rp-tar{font-size:.78rem;color:#94a3b8;width:110px;text-align:right;flex-shrink:0;}
-.rp-ach{font-size:.78rem;font-weight:700;width:110px;text-align:right;flex-shrink:0;}
-.rp-var{font-size:.78rem;font-weight:700;width:100px;text-align:right;flex-shrink:0;}
-.rp-pct-badge{font-size:.7rem;font-weight:800;padding:2px 8px;border-radius:999px;width:54px;text-align:center;flex-shrink:0;}
-.rp-pct-badge.green{background:#dcfce7;color:#15803d;}.rp-pct-badge.amber{background:#fef3c7;color:#92400e;}.rp-pct-badge.red{background:#fee2e2;color:#b91c1c;}
-.rp-track{flex:1.5;background:#f1f5f9;border-radius:999px;height:6px;overflow:hidden;min-width:60px;}
-.rp-fill{height:100%;border-radius:999px;}
-.dm-rp-header{display:flex;align-items:center;gap:12px;padding:6px 1.4rem;background:#f8fafc;border-bottom:1px solid #e2e8f0;font-size:.65rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;}
-.dm-totals-row{display:flex;align-items:center;gap:12px;padding:10px 1.4rem;background:#f0f9ff;border-top:2px solid #bae6fd;font-size:.78rem;font-weight:700;color:#0369a1;}
+.dm-formula{font-size:.68rem;color:#93c5fd;margin-top:2px;font-family:monospace;}
+.dm-kpis{display:flex;gap:0;border:1px solid rgba(255,255,255,.15);border-radius:10px;overflow:hidden;}
+.dm-kpi-box{padding:.6rem 1rem;border-right:1px solid rgba(255,255,255,.15);}
+.dm-kpi-box:last-child{border-right:none;}
+.dm-kpi-label{font-size:.58rem;font-weight:700;color:rgba(255,255,255,.5);text-transform:uppercase;margin-bottom:2px;}
+.dm-kpi-value{font-size:.95rem;font-weight:800;color:#fff;}
 
-.cum-matrix-wrap{overflow-x:auto;border-radius:14px;border:1px solid #e2e8f0;box-shadow:0 2px 8px rgba(0,0,0,.05);}
-.cum-matrix-table{width:100%;border-collapse:collapse;font-size:.8rem;}
-.cum-matrix-table th{background:#1e3a5f;color:#e2e8f0;font-weight:700;padding:10px 14px;text-align:center;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap;position:sticky;top:0;}
-.cum-matrix-table th.entity-col{text-align:left;background:#0f172a;min-width:160px;}
-.cum-matrix-table td{padding:9px 14px;border-bottom:1px solid #f1f5f9;white-space:nowrap;}
-.cum-matrix-table td.entity-name{font-weight:700;color:#1e293b;background:#fafafa;border-right:2px solid #e2e8f0;position:sticky;left:0;}
-.cum-matrix-table tr:hover td{background:#f8fafc;}
-.cum-matrix-table tr:hover td.entity-name{background:#f1f5f9;}
-.cum-matrix-table td.pct-cell{text-align:center;font-weight:700;border-radius:6px;}
+/* RP rows */
+.rp-header-row{display:flex;align-items:center;gap:10px;padding:7px 1.4rem;background:#f8fafc;border-bottom:2px solid #e2e8f0;font-size:.65rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.06em;}
+.rp-data-row{display:flex;align-items:center;gap:10px;padding:10px 1.4rem;border-bottom:1px solid #f1f5f9;}
+.rp-data-row:last-child{border-bottom:none;}
+.rp-data-row:hover{background:#f8fafc;}
+.rp-bullet{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.rp-name{font-size:.85rem;font-weight:600;color:#1e293b;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.rp-bar-wrap{flex:1.5;background:#f1f5f9;border-radius:999px;height:7px;overflow:hidden;min-width:60px;}
+.rp-bar-fill{height:100%;border-radius:999px;}
+.rp-tar{font-size:.78rem;color:#94a3b8;width:115px;text-align:right;flex-shrink:0;}
+.rp-ach{font-size:.78rem;font-weight:700;width:115px;text-align:right;flex-shrink:0;}
+.rp-var{font-size:.78rem;font-weight:700;width:105px;text-align:right;flex-shrink:0;}
+.rp-pct{font-size:.72rem;font-weight:800;padding:3px 9px;border-radius:999px;width:58px;text-align:center;flex-shrink:0;}
 .pct-green{background:#dcfce7;color:#15803d;}
 .pct-amber{background:#fef3c7;color:#92400e;}
 .pct-red{background:#fee2e2;color:#b91c1c;}
-.pct-zero{background:#f1f5f9;color:#94a3b8;}
-.cum-matrix-table .total-row td{background:#dbeafe !important;font-weight:800;color:#1e40af;border-top:2px solid #93c5fd;}
-.cum-matrix-table .total-row td.entity-name{background:#bfdbfe !important;}
 
-.landing{display:flex;flex-direction:column;align-items:center;padding:4rem 2rem 3rem;text-align:center;}
-.landing-logo{font-size:3.5rem;margin-bottom:1.2rem;}
-.landing h2{font-size:1.5rem;font-weight:800;color:#1e293b;margin-bottom:.6rem;}
-.landing p{font-size:.88rem;color:#64748b;max-width:480px;line-height:1.7;}
-.landing-card{background:#f8fafc;border:1px solid #e2e8f0;border-radius:14px;padding:1.3rem 1.8rem;margin-top:1.8rem;text-align:left;max-width:560px;width:100%;}
-.landing-card h4{font-size:.78rem;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.08em;margin-bottom:.8rem;}
-.landing-card li{font-size:.83rem;color:#475569;margin-bottom:.4rem;line-height:1.5;}
-.landing-card code{background:#e2e8f0;padding:1px 5px;border-radius:4px;font-size:.8rem;color:#1e293b;}
-
-.dash-footer{text-align:center;font-size:.72rem;color:#94a3b8;margin-top:2.5rem;padding-top:1.2rem;border-top:1px solid #e2e8f0;}
+.dm-totals{display:flex;align-items:center;gap:10px;padding:9px 1.4rem;background:#f0f9ff;border-top:2px solid #bae6fd;font-size:.78rem;font-weight:700;color:#0369a1;}
 </style>
 """, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
-# CONSTANTS
-# ══════════════════════════════════════════════════════
-PALETTE = [
-    "#3b82f6","#22c55e","#f59e0b","#ef4444","#8b5cf6",
-    "#ec4899","#14b8a6","#f97316","#06b6d4","#a78bfa",
-    "#84cc16","#64748b",
-]
+PALETTE = ["#3b82f6","#22c55e","#f59e0b","#ef4444","#8b5cf6",
+           "#ec4899","#14b8a6","#f97316","#06b6d4","#a78bfa"]
+SKIP_SHEETS = {'SOURCE','HO','SPC','SOURCE (2)','SIX MONTHS',
+               'JAN-2','FEB-2','MAR-2','six months','DEC-2'}
+MONTH_ORDER = ['APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC','JAN','FEB','MAR']
 PLOTLY_BASE = dict(
     font=dict(family="Plus Jakarta Sans, sans-serif", size=12),
     plot_bgcolor="#ffffff", paper_bgcolor="#ffffff",
-    hoverlabel=dict(bgcolor="#0f172a", font_size=12,
-                    font_color="#f8fafc", bordercolor="#1e3a5f"),
+    hoverlabel=dict(bgcolor="#0f172a", font_size=12, font_color="#f8fafc"),
 )
-SKIP_SHEETS = {'SOURCE', 'HO', 'SPC', 'SOURCE (2)', 'SIX MONTHS',
-               'JAN-2', 'FEB-2', 'MAR-2', 'six months', 'DEC-2'}
-MONTH_ORDER = ['APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC','JAN','FEB','MAR']
 
 # ══════════════════════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════════════════════
-def fmt_n(n, dec=0):
+def fmt_n(n):
     try: return f"{int(round(float(n))):,}"
     except: return str(n)
 
 def fmt_lkr(n):
-    try: return f"LKR {int(round(float(n))):,}"
-    except: return str(n)
-
-def fmt_lkr_short(n):
     try:
         v = float(n)
         if abs(v) >= 1_000_000: return f"LKR {v/1_000_000:.2f}M"
@@ -189,14 +143,15 @@ def fmt_lkr_short(n):
         return f"LKR {v:,.0f}"
     except: return str(n)
 
-def pct_cls(p):   return "up" if p >= 100 else "neu" if p >= 80 else "down"
+def pct_badge(p): return "pct-green" if p >= 100 else "pct-amber" if p >= 80 else "pct-red"
 def pct_color(p): return "#16a34a" if p >= 100 else "#d97706" if p >= 80 else "#dc2626"
-def pct_badge(p): return "green" if p >= 100 else "amber" if p >= 80 else "red"
-def is_dm(name):  return "(DM)" in str(name).upper()
+def pct_cls(p):   return "up" if p >= 100 else "neu" if p >= 80 else "down"
+
+def is_sbdm(name): return "(SBDM)" in str(name).upper()
+def is_dm(name):   return "(DM)" in str(name).upper()
 
 def section(title):
-    st.markdown(f"""
-    <div class="sec-div">
+    st.markdown(f"""<div class="sec-div">
         <div class="sec-div-line"></div>
         <div class="sec-div-text">{title}</div>
         <div class="sec-div-line"></div>
@@ -205,8 +160,7 @@ def section(title):
 def kpi_card(col, label, value, icon, color, badge_text=None, badge_cls="neu", sub=None):
     badge = f'<div class="kpi-badge {badge_cls}">{badge_text}</div>' if badge_text else ""
     sub_  = f'<div class="kpi-sub">{sub}</div>' if sub else ""
-    col.markdown(f"""
-    <div class="kpi-card {color}">
+    col.markdown(f"""<div class="kpi-card {color}">
         <div class="kpi-icon-wrap">{icon}</div>
         <div class="kpi-label">{label}</div>
         <div class="kpi-value">{value}</div>
@@ -214,1025 +168,882 @@ def kpi_card(col, label, value, icon, color, badge_text=None, badge_cls="neu", s
     </div>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
-# EXCEL PARSING — UNIVERSAL v12
+# HIERARCHY BUILDER
 # ══════════════════════════════════════════════════════
+def build_hierarchy(entity_order):
+    """SBDM → DM → RP. '__NO_SBDM__' sentinel if no SBDM exists."""
+    hierarchy = {}
+    cur_sbdm = '__NO_SBDM__'
+    cur_dm   = None
 
-def find_total_row(raw):
-    """
-    Find the FIRST TOTAL row that has a large LKR number.
-    Scans cols 4-9 for any value > 100,000 to handle different column layouts.
-    Skips TOTAL rows with all-zero/NaN values (empty/unfilled months like MAR).
-    """
-    for i in range(2, min(80, raw.shape[0])):
-        val_b = str(raw.iloc[i, 1]).strip() if pd.notna(raw.iloc[i, 1]) else ''
-        if val_b != 'TOTAL':
+    for name in entity_order:
+        if name == 'TOTAL':
             continue
-        # Check cols 4-9 for any large LKR value
+        if is_sbdm(name):
+            cur_sbdm = name
+            cur_dm   = None
+            hierarchy.setdefault(cur_sbdm, {})
+        elif is_dm(name):
+            cur_dm = name
+            hierarchy.setdefault(cur_sbdm, {})
+            hierarchy[cur_sbdm][cur_dm] = []
+        else:
+            hierarchy.setdefault(cur_sbdm, {})
+            if cur_dm is None:
+                cur_dm = '__STANDALONE__'
+            hierarchy[cur_sbdm].setdefault(cur_dm, [])
+            hierarchy[cur_sbdm][cur_dm].append(name)
+
+    return hierarchy
+
+def has_sbdm(hierarchy):
+    return any(k != '__NO_SBDM__' for k in hierarchy)
+
+# ══════════════════════════════════════════════════════
+# EXCEL PARSING
+# ══════════════════════════════════════════════════════
+def find_total_row(raw):
+    for i in range(2, min(80, raw.shape[0])):
+        if str(raw.iloc[i, 1]).strip() != 'TOTAL':
+            continue
         for col in range(4, min(raw.shape[1], 10)):
             val = raw.iloc[i, col]
             if pd.notna(val):
                 try:
                     if float(val) > 100000:
                         return i
-                except:
-                    pass
-    return None  # No filled TOTAL row — sheet is empty/unfilled, skip it
-
+                except: pass
+    return None
 
 def find_product_rows(raw, total_row):
-    """
-    Find all product data rows between row 2 and the TOTAL row.
-    A valid product row has a string name in col B and numeric TAR > 0 in col E (TOTAL column).
-    """
-    prod_rows = []
-    skip_names = {'', 'nan', 'TOTAL', '0', 'PRODUCT', '#'}
+    skip = {'', 'nan', 'TOTAL', '0', 'PRODUCT', '#'}
+    rows = []
     for r in range(2, total_row):
         pname = raw.iloc[r, 1]
-        if not isinstance(pname, str):
-            continue
-        pname = pname.strip()
-        if pname in skip_names:
-            continue
+        if not isinstance(pname, str): continue
+        if pname.strip() in skip: continue
         tar = pd.to_numeric(raw.iloc[r, 4], errors='coerce')
         if pd.notna(tar) and float(tar) > 0:
-            prod_rows.append(r)
-    return prod_rows
-
+            rows.append(r)
+    return rows
 
 def parse_excel(file_obj):
     xls = pd.ExcelFile(file_obj)
     sheets = [s for s in xls.sheet_names if s.upper() not in {x.upper() for x in SKIP_SHEETS}]
 
-    all_lkr          = {}
-    all_units         = {}
-    all_dm_rp         = {}
-    all_eo            = {}
-    all_prod          = {}
-    all_prod_entity   = {}
+    all_lkr = {}; all_units = {}; all_hierarchy = {}
+    all_eo  = {}; all_prod  = {}; all_prod_entity = {}
 
     for sheet in sheets:
         try:
             raw = pd.read_excel(file_obj, sheet_name=sheet, header=None)
-        except Exception:
-            continue
-        if raw.shape[0] < 6 or raw.shape[1] < 6:
-            continue
+        except: continue
+        if raw.shape[0] < 6 or raw.shape[1] < 6: continue
 
-        # ── Find TOTAL row (LKR summary row) ─────────────────────
-        lkr_row_idx = find_total_row(raw)
-        if lkr_row_idx is None:
-            continue  # Sheet has no filled data (e.g. MAR not yet filled)
+        lkr_row = find_total_row(raw)
+        if lkr_row is None: continue
 
-        # ── Find product rows ─────────────────────────────────────
-        prod_rows = find_product_rows(raw, lkr_row_idx)
-        if not prod_rows:
-            continue
+        prod_rows = find_product_rows(raw, lkr_row)
+        if not prod_rows: continue
 
-        # ── Parse entity columns from Row 0 ──────────────────────
-        # Entity names appear in Row 0 at every even column from col 4 onwards
-        # Row 1 has TAR/ACH headers confirming each pair
+        # Parse entity columns
         entity_cols = {}
         name_count  = {}
         for j in range(4, raw.shape[1] - 1, 2):
             name_cell = raw.iloc[0, j] if j < raw.shape[1] else None
-            if pd.isna(name_cell) or str(name_cell).strip() in ('', 'nan'):
-                continue
-            # Confirm this column is a TAR column (row 1 = 'TAR' or at least numeric data exists)
+            if pd.isna(name_cell) or str(name_cell).strip() in ('', 'nan'): continue
             hdr = str(raw.iloc[1, j]).strip() if pd.notna(raw.iloc[1, j]) else ''
-            if hdr not in ('TAR', ''):
-                continue
-            base_name = str(name_cell).strip()
-            if base_name in name_count:
-                name_count[base_name] += 1
-                unique_name = f"{base_name}-{name_count[base_name]}"
+            if hdr not in ('TAR', ''): continue
+            base = str(name_cell).strip()
+            if base in name_count:
+                name_count[base] += 1
+                uname = f"{base}-{name_count[base]}"
             else:
-                name_count[base_name] = 1
-                unique_name = base_name
-            entity_cols[unique_name] = j
+                name_count[base] = 1
+                uname = base
+            entity_cols[uname] = j
 
-        if not entity_cols:
-            continue
+        if not entity_cols: continue
 
-        ordered_entities = list(entity_cols.keys())
-        all_eo[sheet] = ordered_entities
+        ordered = list(entity_cols.keys())
+        all_eo[sheet]        = ordered
+        all_hierarchy[sheet] = build_hierarchy(ordered)
 
-        # ── Unit data per entity ──────────────────────────────────
-        units_ms         = {}
-        prod_entity_sheet = {}
+        units_ms = {}; pe_sheet = {}
 
         for ename, tc in entity_cols.items():
             ac = tc + 1
-            tar_vals = raw.iloc[prod_rows, tc].apply(pd.to_numeric, errors='coerce').fillna(0)
-            ach_vals = (raw.iloc[prod_rows, ac].apply(pd.to_numeric, errors='coerce').fillna(0)
-                        if ac < raw.shape[1] else pd.Series([0]*len(prod_rows)))
-            tar_t = float(tar_vals.sum())
-            ach_t = float(ach_vals.sum())
-            var   = ach_t - tar_t
-            pct   = (ach_t / tar_t * 100) if tar_t else 0.0
-            units_ms[ename] = dict(TAR=tar_t, ACH=ach_t, VAR=var, PCT=pct)
-
-            prod_entity_sheet[ename] = {}
-            for idx_r, r in enumerate(prod_rows):
+            tar_v = raw.iloc[prod_rows, tc].apply(pd.to_numeric, errors='coerce').fillna(0)
+            ach_v = (raw.iloc[prod_rows, ac].apply(pd.to_numeric, errors='coerce').fillna(0)
+                     if ac < raw.shape[1] else pd.Series([0]*len(prod_rows)))
+            tar_t = float(tar_v.sum()); ach_t = float(ach_v.sum())
+            units_ms[ename] = dict(TAR=tar_t, ACH=ach_t, VAR=ach_t-tar_t,
+                                   PCT=(ach_t/tar_t*100) if tar_t else 0.0)
+            pe_sheet[ename] = {}
+            for idx, r in enumerate(prod_rows):
                 pname = str(raw.iloc[r, 1]).strip()
-                t = float(tar_vals.iloc[idx_r]) if pd.notna(tar_vals.iloc[idx_r]) else 0.0
-                a = float(ach_vals.iloc[idx_r]) if pd.notna(ach_vals.iloc[idx_r]) else 0.0
-                prod_entity_sheet[ename][pname] = dict(TAR=max(t,0), ACH=max(a,0))
+                t = float(tar_v.iloc[idx]) if pd.notna(tar_v.iloc[idx]) else 0.0
+                a = float(ach_v.iloc[idx]) if pd.notna(ach_v.iloc[idx]) else 0.0
+                pe_sheet[ename][pname] = dict(TAR=max(t,0), ACH=max(a,0))
 
         all_units[sheet]       = units_ms
-        all_prod_entity[sheet] = prod_entity_sheet
+        all_prod_entity[sheet] = pe_sheet
 
-        # ── LKR data from the TOTAL row ───────────────────────────
         lkr_ms = {}
         for ename, tc in entity_cols.items():
             ac = tc + 1
-            tar_lkr = pd.to_numeric(raw.iloc[lkr_row_idx, tc], errors='coerce')
-            ach_lkr = (pd.to_numeric(raw.iloc[lkr_row_idx, ac], errors='coerce')
-                       if ac < raw.shape[1] else np.nan)
-            tar_lkr = float(tar_lkr) if pd.notna(tar_lkr) else 0.0
-            ach_lkr = float(ach_lkr) if pd.notna(ach_lkr) else 0.0
-            var_lkr = ach_lkr - tar_lkr
-            pct_lkr = (ach_lkr / tar_lkr * 100) if tar_lkr else 0.0
-            lkr_ms[ename] = dict(TAR_LKR=tar_lkr, ACH_LKR=ach_lkr,
-                                  VAR_LKR=var_lkr, PCT_LKR=pct_lkr)
+            t = float(pd.to_numeric(raw.iloc[lkr_row, tc], errors='coerce') or 0)
+            a = float(pd.to_numeric(raw.iloc[lkr_row, ac], errors='coerce') or 0) if ac < raw.shape[1] else 0.0
+            lkr_ms[ename] = dict(TAR_LKR=t, ACH_LKR=a, VAR_LKR=a-t,
+                                  PCT_LKR=(a/t*100) if t else 0.0)
         all_lkr[sheet] = lkr_ms
 
-        # ── DM → RP hierarchy ─────────────────────────────────────
-        dm_rp   = {}
-        cur_dm  = None
-        for ename in ordered_entities:
-            if ename == 'TOTAL':
-                continue
-            if is_dm(ename):
-                cur_dm = ename
-                dm_rp[cur_dm] = []
-            elif cur_dm is not None:
-                dm_rp[cur_dm].append(ename)
-        all_dm_rp[sheet] = dm_rp
-
-        # ── Full product rows DataFrame ───────────────────────────
-        prod_rows_list = []
+        rows_list = []
         for r in prod_rows:
             pname = str(raw.iloc[r, 1]).strip()
             for ename, tc in entity_cols.items():
                 ac = tc + 1
-                t = pd.to_numeric(raw.iloc[r, tc], errors='coerce')
-                a = pd.to_numeric(raw.iloc[r, ac], errors='coerce') if ac < raw.shape[1] else np.nan
-                t = float(t) if pd.notna(t) else 0.0
-                a = float(a) if pd.notna(a) else 0.0
-                if t == 0 and a == 0:
-                    continue
-                prod_rows_list.append(dict(
-                    ENTITY=ename, PRODUCT=pname,
-                    TAR=t, ACH=a,
-                    VAR=a - t,
-                    PCT=(a / t * 100) if t else 0.0,
-                ))
-        all_prod[sheet] = pd.DataFrame(prod_rows_list) if prod_rows_list else pd.DataFrame()
+                t = float(pd.to_numeric(raw.iloc[r, tc], errors='coerce') or 0)
+                a = float(pd.to_numeric(raw.iloc[r, ac], errors='coerce') or 0) if ac < raw.shape[1] else 0.0
+                if t == 0 and a == 0: continue
+                rows_list.append(dict(ENTITY=ename, PRODUCT=pname, TAR=t, ACH=a,
+                                      VAR=a-t, PCT=(a/t*100) if t else 0.0))
+        all_prod[sheet] = pd.DataFrame(rows_list) if rows_list else pd.DataFrame()
 
-    return all_lkr, all_units, all_dm_rp, all_eo, all_prod, all_prod_entity
-
+    return all_lkr, all_units, all_hierarchy, all_eo, all_prod, all_prod_entity
 
 # ══════════════════════════════════════════════════════
-# CUMULATIVE COMPUTATION
+# HIERARCHY RENDERER — FIXED
 # ══════════════════════════════════════════════════════
-def build_cumulative_data(month_list, all_prod_entity, all_eo, all_dm_rp):
-    all_products = set()
-    for m in month_list:
-        for ent_data in all_prod_entity.get(m, {}).values():
-            all_products.update(ent_data.keys())
-    all_products = sorted(all_products)
+def render_rp_rows(rp_list, data_ms, fmt_fn, key_prefix):
+    """Render RP rows inside a DM block."""
+    valid_rps = []
+    for rp in rp_list:
+        d = data_ms.get(rp, {})
+        t = d.get('TAR', d.get('TAR_LKR', 0))
+        a = d.get('ACH', d.get('ACH_LKR', 0))
+        if t > 0 or a > 0:
+            valid_rps.append(rp)
 
-    seen_entities = []
-    seen_set = set()
-    for m in month_list:
-        for e in all_eo.get(m, []):
-            if e not in seen_set:
-                seen_entities.append(e)
-                seen_set.add(e)
-
-    cum_by_month_product_entity = {}
-    running_tar = {}
-    running_ach = {}
-
-    for m in month_list:
-        pe = all_prod_entity.get(m, {})
-        cum_by_month_product_entity[m] = {}
-        for entity in seen_entities:
-            entity_prod_data = pe.get(entity, {})
-            if entity not in running_tar:
-                running_tar[entity] = {}
-                running_ach[entity] = {}
-            cum_by_month_product_entity[m][entity] = {}
-            for product in all_products:
-                month_tar = entity_prod_data.get(product, {}).get('TAR', 0.0)
-                month_ach = entity_prod_data.get(product, {}).get('ACH', 0.0)
-                running_tar[entity][product] = running_tar[entity].get(product, 0.0) + month_tar
-                running_ach[entity][product] = running_ach[entity].get(product, 0.0) + month_ach
-                cum_t = running_tar[entity][product]
-                cum_a = running_ach[entity][product]
-                cum_p = (cum_a / cum_t * 100) if cum_t > 0 else 0.0
-                cum_by_month_product_entity[m][entity][product] = dict(
-                    CUM_TAR=cum_t, CUM_ACH=cum_a, CUM_PCT=cum_p,
-                    MONTH_TAR=month_tar, MONTH_ACH=month_ach,
-                )
-
-    return cum_by_month_product_entity, all_products, seen_entities
-
-
-# ══════════════════════════════════════════════════════
-# UI COMPONENTS
-# ══════════════════════════════════════════════════════
-def achievement_rows_ui(rows: list, fmt_fn=fmt_n):
-    if not rows:
-        st.info("No data.")
+    if not valid_rps:
+        st.markdown('<div style="padding:10px 1.4rem;color:#94a3b8;font-size:.8rem;font-style:italic">No RP data.</div>', unsafe_allow_html=True)
         return
-    rows_s = sorted(rows, key=lambda x: x['PCT'], reverse=True)
-    header = """
-    <div class="ach-header">
-        <div style="width:20px"></div>
-        <div class="ach-name">Name</div>
-        <div style="flex:2">Progress</div>
-        <div class="ach-tar">Target</div>
-        <div class="ach-ach">Achieved</div>
+
+    header = """<div class="rp-header-row">
+        <div style="width:7px"></div>
+        <div style="flex:1">Sales Rep / RP</div>
+        <div style="flex:1.5">Progress</div>
+        <div class="rp-tar">Target</div>
+        <div class="rp-ach">Achievement</div>
+        <div class="rp-var">Variance</div>
         <div style="width:58px;text-align:center">Ach %</div>
     </div>"""
-    body = ""
-    for i, r in enumerate(rows_s):
-        p   = r['PCT']
-        c   = pct_color(p)
-        bcl = pct_badge(p)
-        bg  = '#f0fdf4' if p >= 100 else '#fffbeb' if p >= 80 else '#fff'
-        body += f"""
-        <div class="ach-row" style="background:{bg}">
-            <div class="ach-rank">#{i+1}</div>
-            <div class="ach-name" title="{r['name']}">{r['name']}</div>
-            <div class="ach-track">
-                <div class="ach-fill" style="width:{min(p,100):.1f}%;background:{c};opacity:.85"></div>
-            </div>
-            <div class="ach-tar">{fmt_fn(r['TAR'])}</div>
-            <div class="ach-ach" style="color:{c}">{fmt_fn(r['ACH'])}</div>
-            <div class="ach-pct-badge {bcl}">{p:.1f}%</div>
+
+    rows_html = ""
+    rp_tar_sum = rp_ach_sum = 0.0
+    for rp in valid_rps:
+        d   = data_ms.get(rp, {})
+        t   = d.get('TAR', d.get('TAR_LKR', 0))
+        a   = d.get('ACH', d.get('ACH_LKR', 0))
+        v   = a - t
+        p   = (a/t*100) if t else 0.0
+        bc  = pct_color(p)
+        pb  = pct_badge(p)
+        vc  = "#059669" if v >= 0 else "#dc2626"
+        bg  = "#f0fdf4" if p >= 100 else "#fffbeb" if p >= 80 else "#ffffff"
+        rp_tar_sum += t; rp_ach_sum += a
+        rows_html += f"""<div class="rp-data-row" style="background:{bg}">
+            <div class="rp-bullet" style="background:{bc}"></div>
+            <div class="rp-name">{rp}</div>
+            <div class="rp-bar-wrap"><div class="rp-bar-fill" style="width:{min(p,100):.1f}%;background:{bc};opacity:.8"></div></div>
+            <div class="rp-tar">{fmt_fn(t)}</div>
+            <div class="rp-ach" style="color:{bc}">{fmt_fn(a)}</div>
+            <div class="rp-var" style="color:{vc}">{"+" if v>=0 else ""}{fmt_fn(v)}</div>
+            <div class="rp-pct {pb}">{p:.1f}%</div>
         </div>"""
-    st.markdown(header + body, unsafe_allow_html=True)
+
+    roll_pct = (rp_ach_sum/rp_tar_sum*100) if rp_tar_sum else 0
+    totals   = f"""<div class="dm-totals">
+        <div style="width:7px"></div>
+        <div style="flex:1">∑ RP Rollup</div>
+        <div style="flex:1.5"></div>
+        <div class="rp-tar">{fmt_fn(rp_tar_sum)}</div>
+        <div class="rp-ach">{fmt_fn(rp_ach_sum)}</div>
+        <div class="rp-var" style="color:{'#0369a1' if rp_ach_sum>=rp_tar_sum else '#dc2626'}">
+            {"+" if rp_ach_sum-rp_tar_sum>=0 else ""}{fmt_fn(rp_ach_sum-rp_tar_sum)}</div>
+        <div style="width:58px;text-align:center;font-weight:800;color:#0369a1">{roll_pct:.1f}%</div>
+    </div>"""
+
+    st.markdown(header + '<div style="background:#fff">' + rows_html + '</div>' + totals,
+                unsafe_allow_html=True)
 
 
-def render_dm_hierarchy(dm_rp_sheet, data_ms, fmt_fn=fmt_n, label="units"):
-    if not dm_rp_sheet:
-        st.info("No DM → RP mapping found.")
-        return
-    for idx, (dm, rp_list) in enumerate(dm_rp_sheet.items()):
-        dm_d   = data_ms.get(dm, {})
-        dm_tar = dm_d.get('TAR', dm_d.get('TAR_LKR', 0))
-        dm_ach = dm_d.get('ACH', dm_d.get('ACH_LKR', 0))
-        dm_var = dm_d.get('VAR', dm_d.get('VAR_LKR', 0))
-        dm_pct = dm_d.get('PCT', dm_d.get('PCT_LKR', 0))
-        dm_col = PALETTE[idx % len(PALETTE)]
-        pct_c  = pct_badge(dm_pct)
-        rp_formula = " + ".join(rp_list) if rp_list else "No RP sub-teams"
+def render_dm_block(dm_name, rp_list, data_ms, fmt_fn, label, color):
+    """Render one DM block with its RPs."""
+    d   = data_ms.get(dm_name, {})
+    t   = d.get('TAR', d.get('TAR_LKR', 0))
+    a   = d.get('ACH', d.get('ACH_LKR', 0))
+    v   = d.get('VAR', d.get('VAR_LKR', 0))
+    p   = d.get('PCT', d.get('PCT_LKR', 0))
+    pb  = pct_badge(p)
+    vc  = "#4ade80" if v >= 0 else "#f87171"
+    formula = " + ".join(rp_list) if rp_list else "No RP sub-teams"
 
-        html = f"""
-        <div class="dm-block">
-          <div class="dm-header" style="border-left:5px solid {dm_col}">
-            <div class="dm-header-left">
-              <div>
-                <div class="dm-name">👤 {dm}</div>
-                <div class="dm-formula">= {rp_formula}</div>
-              </div>
+    st.markdown(f"""<div class="dm-block">
+        <div class="dm-header" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8);border-left:5px solid {color}">
+            <div>
+                <div class="dm-name">👤 {dm_name}</div>
+                <div class="dm-formula">= {formula}</div>
             </div>
             <div class="dm-kpis">
-              <div class="dm-kpi">
-                <div class="dm-kpi-label">Target ({label})</div>
-                <div class="dm-kpi-value">{fmt_fn(dm_tar)}</div>
-              </div>
-              <div class="dm-kpi">
-                <div class="dm-kpi-label">Achievement ({label})</div>
-                <div class="dm-kpi-value">{fmt_fn(dm_ach)}</div>
-                <span class="dm-kpi-pct {pct_c}">{dm_pct:.1f}%</span>
-              </div>
-              <div class="dm-kpi">
-                <div class="dm-kpi-label">Variance</div>
-                <div class="dm-kpi-value" style="color:{'#4ade80' if dm_var>=0 else '#f87171'}">
-                  {'+' if dm_var>=0 else ''}{fmt_fn(dm_var)}
+                <div class="dm-kpi-box">
+                    <div class="dm-kpi-label">Target ({label})</div>
+                    <div class="dm-kpi-value">{fmt_fn(t)}</div>
                 </div>
-              </div>
+                <div class="dm-kpi-box">
+                    <div class="dm-kpi-label">Achievement ({label})</div>
+                    <div class="dm-kpi-value">{fmt_fn(a)}</div>
+                    <span class="{pb}" style="font-size:.72rem;font-weight:700;padding:2px 9px;border-radius:999px;display:inline-block;margin-top:3px;
+                        {'background:rgba(34,197,94,.25);color:#4ade80' if p>=100 else 'background:rgba(245,158,11,.25);color:#fbbf24' if p>=80 else 'background:rgba(239,68,68,.25);color:#f87171'}">{p:.1f}%</span>
+                </div>
+                <div class="dm-kpi-box">
+                    <div class="dm-kpi-label">Variance</div>
+                    <div class="dm-kpi-value" style="color:{vc}">{"+" if v>=0 else ""}{fmt_fn(v)}</div>
+                </div>
             </div>
-          </div>"""
+        </div>""", unsafe_allow_html=True)
 
-        if rp_list:
-            html += """
-          <div class="dm-rp-header">
-            <div style="width:10px"></div>
-            <div style="flex:1">RP / Sales Rep</div>
-            <div style="flex:1.5">Progress</div>
-            <div style="width:110px;text-align:right">Target</div>
-            <div style="width:110px;text-align:right">Achievement</div>
-            <div style="width:100px;text-align:right">Variance</div>
-            <div style="width:54px;text-align:center">Ach %</div>
-          </div>
-          <div class="dm-rp-list">"""
-            rp_tar_sum = rp_ach_sum = 0
-            for rp in rp_list:
-                rd   = data_ms.get(rp, {})
-                rp_t = rd.get('TAR', rd.get('TAR_LKR', 0))
-                rp_a = rd.get('ACH', rd.get('ACH_LKR', 0))
-                rp_v = rd.get('VAR', rd.get('VAR_LKR', 0))
-                rp_p = rd.get('PCT', rd.get('PCT_LKR', 0))
-                rc   = pct_color(rp_p)
-                rb   = pct_badge(rp_p)
-                rp_tar_sum += rp_t
-                rp_ach_sum += rp_a
-                html += f"""
-            <div class="dm-rp-row">
-              <div class="rp-bullet" style="background:{rc}"></div>
-              <div class="rp-name">{rp}</div>
-              <div class="rp-track">
-                <div class="rp-fill" style="width:{min(rp_p,100):.1f}%;background:{rc};opacity:.8"></div>
-              </div>
-              <div class="rp-tar">{fmt_fn(rp_t)}</div>
-              <div class="rp-ach" style="color:{rc}">{fmt_fn(rp_a)}</div>
-              <div class="rp-var" style="color:{rc}">{'+' if rp_v>=0 else ''}{fmt_fn(rp_v)}</div>
-              <div class="rp-pct-badge {rb}">{rp_p:.1f}%</div>
-            </div>"""
-            roll_pct   = (rp_ach_sum / rp_tar_sum * 100) if rp_tar_sum else 0
-            match_note = ("✓ DM = Σ RP" if abs(dm_tar - rp_tar_sum) < 10
-                          else f"⚠ DM {fmt_fn(dm_tar)} ≠ Σ RP {fmt_fn(rp_tar_sum)}")
-            html += f"""
-          </div>
-          <div class="dm-totals-row">
-            <div style="width:10px"></div>
-            <div style="flex:1">∑ RP Rollup → {dm} &nbsp;
-              <span style="color:#0284c7;font-size:.7rem">{match_note}</span></div>
-            <div style="flex:1.5"></div>
-            <div style="width:110px;text-align:right">{fmt_fn(rp_tar_sum)}</div>
-            <div style="width:110px;text-align:right">{fmt_fn(rp_ach_sum)}</div>
-            <div style="width:100px;text-align:right;color:{'#0369a1' if rp_ach_sum>=rp_tar_sum else '#dc2626'}">
-              {'+' if rp_ach_sum-rp_tar_sum>=0 else ''}{fmt_fn(rp_ach_sum-rp_tar_sum)}
-            </div>
-            <div style="width:54px;text-align:center;font-weight:800;color:#0369a1">{roll_pct:.1f}%</div>
-          </div>"""
+    render_rp_rows(rp_list, data_ms, fmt_fn, f"{dm_name}")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_hierarchy(hierarchy, data_ms, fmt_fn, label,
+                     sbdm_filter="ALL", dm_filter="ALL"):
+    """
+    ✅ FIXED render:
+    - SBDM නැති excel: DMs සියල්ලම directly render කරයි
+    - SBDM ඇති excel: SBDM wrapper ඇතුළේ DMs render කරයි
+    - data_ms zero-check නොකරයි (DM ලා filter out වෙන bug fix)
+    """
+    show_sbdm = has_sbdm(hierarchy)
+
+    for sbdm_key, dm_dict in hierarchy.items():
+        is_real_sbdm = (sbdm_key != '__NO_SBDM__')
+
+        # SBDM filter
+        if sbdm_filter != "ALL" and is_real_sbdm and sbdm_key != sbdm_filter:
+            continue
+
+        # DM filter
+        if dm_filter != "ALL":
+            dm_dict = {k: v for k, v in dm_dict.items() if k == dm_filter}
+            if not dm_dict:
+                continue
+
+        # ── SBDM ඇති විට: SBDM wrapper render කරමු ──
+        if show_sbdm and is_real_sbdm:
+            d    = data_ms.get(sbdm_key, {})
+            s_t  = d.get('TAR', d.get('TAR_LKR', 0))
+            s_a  = d.get('ACH', d.get('ACH_LKR', 0))
+            s_v  = d.get('VAR', d.get('VAR_LKR', 0))
+            s_p  = d.get('PCT', d.get('PCT_LKR', 0))
+            vc   = "#4ade80" if s_v >= 0 else "#f87171"
+            dm_formula = " + ".join(k for k in dm_dict if k != '__STANDALONE__')
+
+            st.markdown(f"""<div class="sbdm-block">
+                <div class="sbdm-header">
+                    <div>
+                        <div class="sbdm-tag">⭐ Senior BDM</div>
+                        <div class="sbdm-name">{sbdm_key}</div>
+                        <div class="sbdm-formula">= {dm_formula}</div>
+                    </div>
+                    <div class="sbdm-kpis">
+                        <div class="sbdm-kpi-box">
+                            <div class="sbdm-kpi-label">Target ({label})</div>
+                            <div class="sbdm-kpi-value">{fmt_fn(s_t)}</div>
+                        </div>
+                        <div class="sbdm-kpi-box">
+                            <div class="sbdm-kpi-label">Achievement ({label})</div>
+                            <div class="sbdm-kpi-value">{fmt_fn(s_a)}</div>
+                            <span style="font-size:.72rem;font-weight:700;padding:2px 9px;border-radius:999px;display:inline-block;margin-top:3px;
+                                {'background:rgba(34,197,94,.25);color:#4ade80' if s_p>=100 else 'background:rgba(245,158,11,.25);color:#fbbf24' if s_p>=80 else 'background:rgba(239,68,68,.25);color:#f87171'}">{s_p:.1f}%</span>
+                        </div>
+                        <div class="sbdm-kpi-box">
+                            <div class="sbdm-kpi-label">Variance</div>
+                            <div class="sbdm-kpi-value" style="color:{vc}">{"+" if s_v>=0 else ""}{fmt_fn(s_v)}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="sbdm-body"><div class="sbdm-dm-list">""", unsafe_allow_html=True)
+
+            for i, (dm_k, rp_list) in enumerate(dm_dict.items()):
+                if dm_k == '__STANDALONE__': continue
+                render_dm_block(dm_k, rp_list, data_ms, fmt_fn, label, PALETTE[i % len(PALETTE)])
+
+            st.markdown("</div></div></div>", unsafe_allow_html=True)
+
+        # ── SBDM නැති විට: DMs directly render කරමු ──
         else:
-            html += '<div class="dm-rp-list"><div class="dm-rp-row" style="color:#94a3b8;font-size:.8rem;font-style:italic">No RP sub-teams.</div></div>'
-        html += "</div>"
-        st.markdown(html, unsafe_allow_html=True)
-
-
-def donut_chart(label_vals, center_label, key, pal_offset=0):
-    items = [(k, v) for k, v in label_vals.items() if v and v > 0]
-    if not items:
-        st.info("No data.")
-        return
-    labels, vals = zip(*items)
-    colors = PALETTE[pal_offset:pal_offset + len(labels)]
-    fig = go.Figure(go.Pie(
-        labels=labels, values=vals, hole=.55,
-        marker=dict(colors=colors, line=dict(color="#fff", width=2)),
-        textinfo="percent+label", textfont=dict(size=11),
-        hovertemplate="<b>%{label}</b><br>%{value:,.0f}<br>%{percent}<extra></extra>",
-    ))
-    fig.add_annotation(text=f"<b>{fmt_n(sum(vals))}</b>",
-                       x=0.5, y=0.54, font=dict(size=14, color="#1e293b"), showarrow=False)
-    fig.add_annotation(text=center_label,
-                       x=0.5, y=0.42, font=dict(size=10, color="#94a3b8"), showarrow=False)
-    fig.update_layout(**PLOTLY_BASE, height=320,
-                      margin=dict(t=10, b=10, l=10, r=10), showlegend=False)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
+            for i, (dm_k, rp_list) in enumerate(dm_dict.items()):
+                if dm_k == '__STANDALONE__': continue
+                render_dm_block(dm_k, rp_list, data_ms, fmt_fn, label, PALETTE[i % len(PALETTE)])
+                st.markdown("<br>", unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown("""
-    <div style="padding-bottom:10px">
+    st.markdown("""<div style="padding-bottom:10px">
         <h2>📊 Sales Intelligence Hub</h2>
-        <p>Universal Sales Dashboard</p>
+        <p style="font-size:.78rem">Universal Dashboard · v14.0</p>
     </div>""", unsafe_allow_html=True)
-
     st.markdown("---")
-    st.markdown('<span style="font-weight:bold">📂 Upload Excel Files</span>', unsafe_allow_html=True)
+    st.markdown('<span style="font-weight:700;font-size:.85rem">📂 Excel Upload</span>', unsafe_allow_html=True)
 
     uploaded_files = st.file_uploader(
-        "Upload one or more Excel files",
-        type=["xlsx", "xls"],
-        accept_multiple_files=True
+        "Upload Excel files", type=["xlsx","xls"], accept_multiple_files=True
     )
-
     st.markdown("---")
 
     if uploaded_files:
-        file_names = [f.name for f in uploaded_files]
-        selected_file_name = st.selectbox("📁 Select File", file_names) if len(file_names) > 1 else file_names[0]
-        uploaded_file = next(f for f in uploaded_files if f.name == selected_file_name)
-        dash_title = selected_file_name.rsplit('.', 1)[0].replace('_', ' ').replace('-', ' ').upper()
+        names = [f.name for f in uploaded_files]
+        sel_name = st.selectbox("📁 File", names) if len(names) > 1 else names[0]
+        ufile    = next(f for f in uploaded_files if f.name == sel_name)
+        dash_title = sel_name.rsplit('.',1)[0].replace('_',' ').replace('-',' ').upper()
 
         with st.spinner("Parsing Excel…"):
-            (all_lkr, all_units, all_dm_rp,
-             all_eo, all_prod, all_prod_entity) = parse_excel(uploaded_file)
+            all_lkr, all_units, all_hierarchy, all_eo, all_prod, all_prod_entity = parse_excel(ufile)
 
         month_list = [m for m in MONTH_ORDER if m in all_lkr]
         if not month_list:
-            st.error("No valid data sheets found. Check the Excel format.")
+            st.error("Valid data sheets not found.")
             st.stop()
 
         sel_month = st.selectbox("📅 Month", month_list)
-
         lkr_ms   = all_lkr[sel_month]
         units_ms = all_units[sel_month]
-        drm      = all_dm_rp[sel_month]
+        hier     = all_hierarchy[sel_month]
         eo       = all_eo[sel_month]
-        prd      = all_prod.get(sel_month, pd.DataFrame())
 
-        dm_keys     = [e for e in eo if is_dm(e)]
-        all_sub_rps = {rp for rps in drm.values() for rp in rps}
+        sbdm_keys = [e for e in eo if is_sbdm(e)]
+        dm_keys   = [e for e in eo if is_dm(e)]
+        show_sbdm = len(sbdm_keys) > 0
 
-        total_lkr     = lkr_ms.get('TOTAL', {})
-        total_tar_lkr = total_lkr.get('TAR_LKR', 0)
-        total_ach_lkr = total_lkr.get('ACH_LKR', 0)
-        total_var_lkr = total_lkr.get('VAR_LKR', 0)
-        total_pct_lkr = total_lkr.get('PCT_LKR', 0)
-
-        total_units = units_ms.get('TOTAL', {})
-        total_tar_u = total_units.get('TAR', 0)
-        total_ach_u = total_units.get('ACH', 0)
-        total_pct_u = total_units.get('PCT', 0)
-
-        p_col  = "#4ade80" if total_pct_lkr >= 100 else "#fbbf24" if total_pct_lkr >= 80 else "#f87171"
-        pu_col = "#4ade80" if total_pct_u  >= 100 else "#fbbf24" if total_pct_u  >= 80 else "#f87171"
+        tot_lkr  = lkr_ms.get('TOTAL', {})
+        tot_t    = tot_lkr.get('TAR_LKR', 0)
+        tot_a    = tot_lkr.get('ACH_LKR', 0)
+        tot_v    = tot_lkr.get('VAR_LKR', 0)
+        tot_p    = tot_lkr.get('PCT_LKR', 0)
+        tot_u    = units_ms.get('TOTAL', {})
 
         st.markdown("---")
-        st.markdown('<span style="font-weight:bold">📌 Quick Stats</span>', unsafe_allow_html=True)
+        st.markdown('<span style="font-weight:700;font-size:.85rem">📌 Quick Stats</span>', unsafe_allow_html=True)
+        p_col = "#4ade80" if tot_p >= 100 else "#fbbf24" if tot_p >= 80 else "#f87171"
         st.markdown(f"""
-        <div>Target (LKR): {fmt_lkr(total_tar_lkr)}</div>
-        <div>Achievement (LKR): {fmt_lkr(total_ach_lkr)}</div>
-        <div style="color:{p_col}">LKR Ach %: {total_pct_lkr:.1f}%</div>
-        <div>Target (units): {fmt_n(total_tar_u)}</div>
-        <div>Achievement (units): {fmt_n(total_ach_u)}</div>
-        <div style="color:{pu_col}">Unit Ach %: {total_pct_u:.1f}%</div>
-        <div>DMs: {len(dm_keys)}</div>
-        <div>Months loaded: {len(month_list)}</div>
-        """, unsafe_allow_html=True)
+        <div style="font-size:.82rem;line-height:1.9">
+        Target: {fmt_lkr(tot_t)}<br>
+        Achievement: {fmt_lkr(tot_a)}<br>
+        <span style="color:{p_col};font-weight:700">LKR Ach %: {tot_p:.1f}%</span><br>
+        Units Target: {fmt_n(tot_u.get('TAR',0))}<br>
+        Units Achievement: {fmt_n(tot_u.get('ACH',0))}<br>
+        {'SBDMs: ' + str(len(sbdm_keys)) + '<br>' if show_sbdm else ''}
+        DMs: {len(dm_keys)}<br>
+        Months loaded: {len(month_list)}
+        </div>""", unsafe_allow_html=True)
 
         st.markdown("---")
+        if show_sbdm:
+            sbdm_filter = st.selectbox("🔍 Filter SBDM", ["ALL"] + sbdm_keys)
+        else:
+            sbdm_filter = "ALL"
         dm_filter = st.selectbox("🔍 Filter DM", ["ALL"] + dm_keys)
-
-        cum_data, all_products, all_entities = build_cumulative_data(
-            month_list, all_prod_entity, all_eo, all_dm_rp
-        )
     else:
-        st.info("Upload an Excel file to begin.")
+        st.info("Excel file upload කරන්න.")
         dash_title = "Sales Intelligence Hub"
 
     st.markdown("---")
-    st.markdown("<small style='color:#334155;font-size:.68rem'>Universal Sales Hub · v12.0</small>",
-                unsafe_allow_html=True)
+    st.markdown("<small style='color:#475569;font-size:.68rem'>v14.0 · Fixed Hierarchy</small>", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
-# LANDING PAGE
+# LANDING
 # ══════════════════════════════════════════════════════
 if not uploaded_files:
-    st.markdown("""
-    <div class="landing">
-        <div class="landing-logo">📊</div>
-        <h2>Universal Sales Intelligence Hub</h2>
-        <p>Upload <strong>any Excel file</strong> in the standard sales format to instantly see
-        targets, achievements and the DM → RP hierarchy — all figures read directly from your Excel.</p>
-        <div class="landing-card">
-            <h4>✅ Supported Excel Format</h4>
-            <ul>
-                <li><strong>Sheets:</strong> APR, MAY, JUN … MAR (monthly tabs)</li>
-                <li><strong>Row 0:</strong> Month name (col A) + Entity names every 2 cols from col E</li>
-                <li><strong>Row 1:</strong> # · PRODUCT · TAR · ACH headers</li>
-                <li><strong>Rows 2+:</strong> Product rows — name in col B, units in col E onwards</li>
-                <li><strong>TOTAL row:</strong> col B = "TOTAL", col E onwards = LKR values</li>
-                <li><strong>DM detection:</strong> Any entity name containing <code>(DM)</code></li>
-                <li><strong>Multiple files:</strong> Upload several files, switch between them</li>
-                <li><strong>Empty months:</strong> Automatically skipped if not yet filled</li>
-            </ul>
-        </div>
+    st.markdown("""<div style="display:flex;flex-direction:column;align-items:center;padding:5rem 2rem;text-align:center">
+        <div style="font-size:3.5rem;margin-bottom:1.2rem">📊</div>
+        <h2 style="font-size:1.5rem;font-weight:800;color:#1e293b;margin-bottom:.6rem">Universal Sales Intelligence Hub</h2>
+        <p style="font-size:.88rem;color:#64748b;max-width:480px;line-height:1.7">
+        Excel file upload කරන්න. SBDM ඇත්නම් <strong>SBDM → DM → RP</strong> hierarchy පෙනේ.<br>
+        SBDM නැත්නම් <strong>DM → RP</strong> directly පෙනේ.
+        </p>
     </div>""", unsafe_allow_html=True)
     st.stop()
 
 # ══════════════════════════════════════════════════════
 # PAGE HEADER
 # ══════════════════════════════════════════════════════
-v_sign = "▲" if total_var_lkr >= 0 else "▼"
-v_col  = "#4ade80" if total_var_lkr >= 0 else "#f87171"
-st.markdown(f"""
-<div class="page-header">
+hier_label = "SBDM → DM → RP" if show_sbdm else "DM → RP"
+v_sign = "▲" if tot_v >= 0 else "▼"
+v_col  = "#4ade80" if tot_v >= 0 else "#f87171"
+
+st.markdown(f"""<div class="page-header">
     <div>
         <h1>📊 {dash_title} — Sales Performance</h1>
+        <p>{hier_label} hierarchy · {sel_month}</p>
     </div>
     <div class="hdr-chips">
         <span class="hdr-chip live">● LIVE</span>
         <span class="hdr-chip month">📅 {sel_month}</span>
-        <span class="hdr-chip month" style="color:{v_col}">
-            {v_sign} {fmt_lkr(abs(total_var_lkr))} variance
-        </span>
+        <span class="hdr-chip month" style="color:{v_col}">{v_sign} {fmt_lkr(abs(tot_v))} variance</span>
     </div>
 </div>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════
-tab2, tab1, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "📅 All Months",
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📆 Overview",
-    "👥 DM Breakdown",
-    "🏢 RP / Rep Detail",
+    "📅 All Months",
+    "👥 DM / SBDM Breakdown",
+    "🏢 RP Detail",
     "📦 Products",
-    "📈 LKR Trend",
-    "📊 Cumulative",
 ])
 
-# ╔══════════════════════════════╗
-# ║  TAB — OVERVIEW             ║
-# ╚══════════════════════════════╝
+# ╔══════════════════════════════════════╗
+# ║  TAB 1 — OVERVIEW                   ║
+# ╚══════════════════════════════════════╝
 with tab1:
-    ov_month   = st.selectbox("Select Month", month_list,
-                               index=month_list.index(sel_month), key="overview_month")
-    ov_lkr_ms  = all_lkr[ov_month]
-    ov_units_ms= all_units[ov_month]
-    ov_drm     = all_dm_rp[ov_month]
-    ov_eo      = all_eo[ov_month]
-    ov_dm_keys = [e for e in ov_eo if is_dm(e)]
+    ov_month  = st.selectbox("Month", month_list, index=month_list.index(sel_month), key="ov_m")
+    ov_lkr    = all_lkr[ov_month]
+    ov_units  = all_units[ov_month]
+    ov_eo     = all_eo[ov_month]
 
-    ov_tot_lkr = ov_lkr_ms.get('TOTAL', {})
-    ov_tar_lkr = ov_tot_lkr.get('TAR_LKR', 0)
-    ov_ach_lkr = ov_tot_lkr.get('ACH_LKR', 0)
-    ov_var_lkr = ov_tot_lkr.get('VAR_LKR', 0)
-    ov_pct_lkr = ov_tot_lkr.get('PCT_LKR', 0)
+    ov_tot  = ov_lkr.get('TOTAL', {})
+    ov_t    = ov_tot.get('TAR_LKR', 0)
+    ov_a    = ov_tot.get('ACH_LKR', 0)
+    ov_v    = ov_tot.get('VAR_LKR', 0)
+    ov_p    = ov_tot.get('PCT_LKR', 0)
+    ov_ut   = ov_units.get('TOTAL', {})
 
     section("LKR PERFORMANCE")
-    c1, c2, c3, c4 = st.columns(4)
-    kpi_card(c1, "Total Target (LKR)", fmt_lkr(ov_tar_lkr), "🎯", "c-blue", sub=f"{ov_month}")
-    kpi_card(c2, "Total Achievement (LKR)", fmt_lkr(ov_ach_lkr), "💰", "c-green",
-             badge_text=f"{'▲' if ov_var_lkr>=0 else '▼'} {fmt_lkr(abs(ov_var_lkr))}",
-             badge_cls=pct_cls(ov_pct_lkr))
-    kpi_card(c3, "LKR Achievement %", f"{ov_pct_lkr:.1f}%", "📈",
-             "c-green" if ov_pct_lkr>=100 else "c-amber",
-             badge_text="On Track" if ov_pct_lkr>=100 else "Below Target",
-             badge_cls=pct_cls(ov_pct_lkr))
-    kpi_card(c4, "LKR Variance", fmt_lkr(abs(ov_var_lkr)),
-             "📊" if ov_var_lkr>=0 else "📉",
-             "c-teal" if ov_var_lkr>=0 else "c-red",
-             badge_text="▲ Surplus" if ov_var_lkr>=0 else "▼ Shortfall",
-             badge_cls="up" if ov_var_lkr>=0 else "down")
+    c1,c2,c3,c4 = st.columns(4)
+    kpi_card(c1, "Total Target (LKR)", fmt_lkr(ov_t), "🎯", "c-blue", sub=ov_month)
+    kpi_card(c2, "Total Achievement (LKR)", fmt_lkr(ov_a), "💰", "c-green",
+             badge_text=f"{'▲' if ov_v>=0 else '▼'} {fmt_lkr(abs(ov_v))}", badge_cls=pct_cls(ov_p))
+    kpi_card(c3, "LKR Ach %", f"{ov_p:.1f}%", "📈",
+             "c-green" if ov_p>=100 else "c-amber",
+             badge_text="On Track" if ov_p>=100 else "Below Target", badge_cls=pct_cls(ov_p))
+    kpi_card(c4, "LKR Variance", fmt_lkr(abs(ov_v)),
+             "📊" if ov_v>=0 else "📉", "c-teal" if ov_v>=0 else "c-red",
+             badge_text="▲ Surplus" if ov_v>=0 else "▼ Shortfall",
+             badge_cls="up" if ov_v>=0 else "down")
 
-    top_ents = [e for e in ov_eo if e!='TOTAL' and ov_lkr_ms.get(e,{}).get('TAR_LKR',0)>0]
+    st.markdown("<br>", unsafe_allow_html=True)
+    u1,u2,u3,u4 = st.columns(4)
+    kpi_card(u1, "Unit Target", fmt_n(ov_ut.get('TAR',0)), "📦", "c-indigo", sub=ov_month)
+    kpi_card(u2, "Unit Achievement", fmt_n(ov_ut.get('ACH',0)), "✅", "c-purple",
+             badge_text=f"{ov_ut.get('PCT',0):.1f}%", badge_cls=pct_cls(ov_ut.get('PCT',0)))
+    sbdm_cnt = len([e for e in ov_eo if is_sbdm(e)])
+    dm_cnt   = len([e for e in ov_eo if is_dm(e)])
+    if sbdm_cnt:
+        kpi_card(u3, "SBDMs", str(sbdm_cnt), "⭐", "c-purple")
+    else:
+        kpi_card(u3, "Hierarchy", "DM → RP", "🏗️", "c-orange")
+    kpi_card(u4, "DMs", str(dm_cnt), "👤", "c-blue")
 
-    non_total = [(e, ov_lkr_ms[e]) for e in top_ents]
-    if non_total:
-        best = max(non_total, key=lambda x: x[1]['PCT_LKR'])
-        st.markdown(f"""<div class="insight-strip">
-            <div class="insight-pill">
-                <div class="insight-dot" style="background:#22c55e"></div>
-                Best entity: <strong>{best[0]}</strong> at <strong>{best[1]['PCT_LKR']:.1f}%</strong>
-            </div></div>""", unsafe_allow_html=True)
+    section("TARGET vs ACHIEVEMENT — ALL ENTITIES")
+    top_ents = [e for e in ov_eo if e!='TOTAL' and ov_lkr.get(e,{}).get('TAR_LKR',0)>0]
 
-    section("LKR: TARGET vs ACHIEVEMENT BY ENTITY")
-    col_bar, col_pie = st.columns([3, 2])
-    with col_bar:
-        st.markdown('<div class="card"><div class="card-header"><div>'
-                    '<div class="card-title">LKR TAR vs ACH — All Entities</div>'
-                    '</div><span class="card-badge">Bar</span></div>', unsafe_allow_html=True)
-        if top_ents:
-            tars  = [ov_lkr_ms[e]['TAR_LKR'] for e in top_ents]
-            achs  = [ov_lkr_ms[e]['ACH_LKR'] for e in top_ents]
-            pcts  = [ov_lkr_ms[e]['PCT_LKR'] for e in top_ents]
-            short = [n[:13]+"…" if len(n)>13 else n for n in top_ents]
-            fig_b = go.Figure()
-            fig_b.add_trace(go.Bar(name="Target", x=top_ents, y=tars,
-                marker=dict(color="#93c5fd", line=dict(width=0)), width=0.35, offset=-0.2))
-            fig_b.add_trace(go.Bar(name="Achievement", x=top_ents, y=achs,
-                marker=dict(color=[pct_color(p) for p in pcts], opacity=0.9, line=dict(width=0)),
-                width=0.35, offset=0.05,
-                text=[f"{p:.1f}%" for p in pcts], textposition="outside",
-                textfont=dict(size=10, color="#475569")))
-            fig_b.update_layout(**PLOTLY_BASE, barmode="overlay", height=360,
-                margin=dict(t=30,b=100,l=80,r=20), bargap=0.25,
-                legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1,bgcolor="rgba(0,0,0,0)"),
-                xaxis=dict(tickangle=-40,tickfont=dict(size=10,color="#64748b"),showgrid=False,
-                           tickmode="array",tickvals=list(range(len(top_ents))),ticktext=short),
-                yaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=10,color="#94a3b8"),title="LKR"))
-            st.plotly_chart(fig_b, use_container_width=True, config={"displayModeBar": False})
+    col_b, col_p = st.columns([3,2])
+    with col_b:
+        st.markdown('<div class="card"><div class="card-title">LKR TAR vs ACH — All Entities</div>', unsafe_allow_html=True)
+        tars  = [ov_lkr[e]['TAR_LKR'] for e in top_ents]
+        achs  = [ov_lkr[e]['ACH_LKR'] for e in top_ents]
+        pcts  = [ov_lkr[e]['PCT_LKR'] for e in top_ents]
+        short = [n[:14]+"…" if len(n)>14 else n for n in top_ents]
+        fig_b = go.Figure()
+        fig_b.add_trace(go.Bar(name="Target", x=top_ents, y=tars,
+            marker=dict(color="#93c5fd",line=dict(width=0)), width=0.35, offset=-0.2))
+        fig_b.add_trace(go.Bar(name="Achievement", x=top_ents, y=achs,
+            marker=dict(color=[pct_color(p) for p in pcts], opacity=0.9, line=dict(width=0)),
+            width=0.35, offset=0.05,
+            text=[f"{p:.1f}%" for p in pcts], textposition="outside", textfont=dict(size=10)))
+        fig_b.update_layout(**PLOTLY_BASE, barmode="overlay", height=360,
+            margin=dict(t=20,b=100,l=80,r=20),
+            xaxis=dict(tickangle=-40, tickfont=dict(size=10,color="#64748b"), showgrid=False,
+                       tickmode="array", tickvals=list(range(len(top_ents))), ticktext=short),
+            yaxis=dict(gridcolor="#f1f5f9", tickfont=dict(size=10,color="#94a3b8"), title="LKR"),
+            legend=dict(orientation="h",y=1.05,xanchor="right",x=1,bgcolor="rgba(0,0,0,0)"))
+        st.plotly_chart(fig_b, use_container_width=True, config={"displayModeBar":False})
         st.markdown('</div>', unsafe_allow_html=True)
 
-    with col_pie:
-        st.markdown('<div class="card"><div class="card-header"><div>'
-                    '<div class="card-title">DM Achievement Share (LKR)</div>'
-                    '</div><span class="card-badge">Pie</span></div>', unsafe_allow_html=True)
-        donut_chart(
-            {k: ov_lkr_ms.get(k,{}).get('ACH_LKR',0) for k in ov_dm_keys
-             if ov_lkr_ms.get(k,{}).get('ACH_LKR',0)>0},
-            "DM ACH LKR", key=f"dm_donut_{ov_month}")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    section("LKR ACHIEVEMENT % RANKING")
-    col_rank, col_sc = st.columns([3, 2])
-    with col_rank:
-        st.markdown('<div class="card"><div class="card-header"><div>'
-                    '<div class="card-title">Achievement % by Entity (LKR)</div>'
-                    '<div class="card-sub">Green ≥100% · Amber ≥80% · Red &lt;80%</div>'
-                    '</div></div>', unsafe_allow_html=True)
-        achievement_rows_ui(
-            [dict(name=e, TAR=ov_lkr_ms[e]['TAR_LKR'],
-                  ACH=ov_lkr_ms[e]['ACH_LKR'], PCT=ov_lkr_ms[e]['PCT_LKR'])
-             for e in top_ents], fmt_fn=fmt_lkr)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with col_sc:
-        st.markdown('<div class="card"><div class="card-header"><div>'
-                    '<div class="card-title">TAR vs ACH Scatter (LKR)</div>'
-                    '<div class="card-sub">Above diagonal = on/over target</div>'
-                    '</div></div>', unsafe_allow_html=True)
-        sc_rows = [dict(Entity=e, TAR=ov_lkr_ms[e]['TAR_LKR'],
-                        ACH=ov_lkr_ms[e]['ACH_LKR'], PCT=ov_lkr_ms[e]['PCT_LKR'],
-                        Type="DM" if is_dm(e) else "RP/Rep")
-                   for e in top_ents]
-        if sc_rows:
-            sc_df  = pd.DataFrame(sc_rows)
-            fig_sc = px.scatter(sc_df, x="TAR", y="ACH", color="Type", size="PCT",
-                                hover_name="Entity",
-                                hover_data={"TAR":":.0f","ACH":":.0f","PCT":":.1f","Type":False},
-                                color_discrete_map={"DM":"#3b82f6","RP/Rep":"#8b5cf6"},
-                                size_max=26)
-            mx = max(sc_df["TAR"].max(), sc_df["ACH"].max()) * 1.1
-            fig_sc.add_shape(type="line", x0=0, y0=0, x1=mx, y1=mx,
-                             line=dict(color="#94a3b8", dash="dot", width=1.5))
-            fig_sc.update_layout(**PLOTLY_BASE, height=320,
-                margin=dict(t=10,b=50,l=70,r=10),
-                legend=dict(font=dict(size=11),bgcolor="rgba(0,0,0,0)",
-                            orientation="h",yanchor="bottom",y=1.01,xanchor="right",x=1),
-                xaxis=dict(gridcolor="#f1f5f9",tickfont=dict(color="#94a3b8",size=10),title="Target (LKR)"),
-                yaxis=dict(gridcolor="#f1f5f9",tickfont=dict(color="#94a3b8",size=10),title="Achievement (LKR)"))
-            st.plotly_chart(fig_sc, use_container_width=True, config={"displayModeBar": False})
+    with col_p:
+        grp_keys = [e for e in ov_eo if is_sbdm(e)] or [e for e in ov_eo if is_dm(e)]
+        pie_lbl  = "SBDM Achievement Share" if any(is_sbdm(e) for e in ov_eo) else "DM Achievement Share"
+        st.markdown(f'<div class="card"><div class="card-title">{pie_lbl} (LKR)</div>', unsafe_allow_html=True)
+        items = {k: ov_lkr.get(k,{}).get('ACH_LKR',0) for k in grp_keys if ov_lkr.get(k,{}).get('ACH_LKR',0)>0}
+        if items:
+            labels, vals = zip(*items.items())
+            fig_p = go.Figure(go.Pie(
+                labels=labels, values=vals, hole=.55,
+                marker=dict(colors=PALETTE[:len(labels)], line=dict(color="#fff",width=2)),
+                textinfo="percent+label", textfont=dict(size=11)))
+            fig_p.update_layout(**PLOTLY_BASE, height=320,
+                margin=dict(t=10,b=10,l=10,r=10), showlegend=False)
+            st.plotly_chart(fig_p, use_container_width=True, config={"displayModeBar":False})
         st.markdown('</div>', unsafe_allow_html=True)
 
     section("ENTITY SUMMARY TABLE")
-    tbl_rows = []
+    tbl = []
     for e in ov_eo:
-        lkr_d  = ov_lkr_ms.get(e, {})
-        unit_d = ov_units_ms.get(e, {})
-        etype  = "TOTAL" if e=="TOTAL" else "DM" if is_dm(e) else "RP/Rep"
-        tbl_rows.append({
-            "Entity":e, "Type":etype,
-            "Target LKR":round(lkr_d.get("TAR_LKR",0)),
-            "Achievement LKR":round(lkr_d.get("ACH_LKR",0)),
-            "LKR Ach %":round(lkr_d.get("PCT_LKR",0),1),
-            "LKR Variance":round(lkr_d.get("VAR_LKR",0)),
-            "Target Units":round(unit_d.get("TAR",0)),
-            "Achievement Units":round(unit_d.get("ACH",0)),
-            "Unit Ach %":round(unit_d.get("PCT",0),1),
-            "Unit Variance":round(unit_d.get("VAR",0)),
-        })
-    tbl_df = pd.DataFrame(tbl_rows)
-    num_cols = ["Target LKR","Achievement LKR","LKR Variance","Target Units","Achievement Units","Unit Variance"]
+        l = ov_lkr.get(e,{}); u = ov_units.get(e,{})
+        et = "TOTAL" if e=="TOTAL" else "SBDM" if is_sbdm(e) else "DM" if is_dm(e) else "RP/Rep"
+        tbl.append({"Entity":e,"Type":et,
+                    "Target LKR":round(l.get("TAR_LKR",0)),
+                    "Achievement LKR":round(l.get("ACH_LKR",0)),
+                    "LKR Ach %":round(l.get("PCT_LKR",0),1),
+                    "LKR Variance":round(l.get("VAR_LKR",0)),
+                    "Target Units":round(u.get("TAR",0)),
+                    "Achievement Units":round(u.get("ACH",0)),
+                    "Unit Ach %":round(u.get("PCT",0),1)})
+    tbl_df = pd.DataFrame(tbl)
+    num_cols = ["Target LKR","Achievement LKR","LKR Variance","Target Units","Achievement Units"]
     tbl_df = tbl_df[~(tbl_df[num_cols]==0).all(axis=1)]
-    st.dataframe(
-        tbl_df.style
+    st.dataframe(tbl_df.style
         .format({"Target LKR":"{:,.0f}","Achievement LKR":"{:,.0f}","LKR Ach %":"{:.1f}%",
-                 "LKR Variance":"{:+,.0f}","Target Units":"{:,.0f}","Achievement Units":"{:,.0f}",
-                 "Unit Ach %":"{:.1f}%","Unit Variance":"{:+,.0f}"})
-        .map(lambda v:("color:#059669;font-weight:700" if v>=0 else "color:#dc2626;font-weight:700")
-             if isinstance(v,(int,float)) else "", subset=["LKR Variance","Unit Variance"])
-        .map(lambda v:("color:#059669;font-weight:700" if v>=100 else
-                       "color:#d97706;font-weight:700" if v>=80 else "color:#dc2626;font-weight:700")
+                 "LKR Variance":"{:+,.0f}","Target Units":"{:,.0f}",
+                 "Achievement Units":"{:,.0f}","Unit Ach %":"{:.1f}%"})
+        .map(lambda v: ("color:#059669;font-weight:700" if v>=0 else "color:#dc2626;font-weight:700")
+             if isinstance(v,(int,float)) else "", subset=["LKR Variance"])
+        .map(lambda v: ("color:#059669;font-weight:700" if v>=100 else
+                        "color:#d97706;font-weight:700" if v>=80 else "color:#dc2626;font-weight:700")
              if isinstance(v,(int,float)) else "", subset=["LKR Ach %","Unit Ach %"]),
         use_container_width=True, hide_index=True, height=min(520, len(tbl_df)*42+60))
-    dl1,_ = st.columns([1,5])
-    with dl1:
-        st.download_button("⬇️ Export CSV", data=tbl_df.to_csv(index=False).encode("utf-8"),
+    dl,_ = st.columns([1,5])
+    with dl:
+        st.download_button("⬇️ Export CSV", data=tbl_df.to_csv(index=False).encode(),
             file_name=f"{dash_title}_{ov_month}.csv", mime="text/csv", use_container_width=True)
 
-# ╔══════════════════════════════╗
-# ║  TAB — ALL MONTHS           ║
-# ╚══════════════════════════════╝
+
+# ╔══════════════════════════════════════╗
+# ║  TAB 2 — ALL MONTHS                 ║
+# ╚══════════════════════════════════════╝
 with tab2:
-    summary_rows = []
+    summary = []
     for m in month_list:
-        lkr_m  = all_lkr[m]
-        unit_m = all_units[m]
-        eo_m   = all_eo[m]
-        dm_k   = [e for e in eo_m if is_dm(e)]
-        tot_l  = lkr_m.get('TOTAL', {})
-        tot_u  = unit_m.get('TOTAL', {})
-        summary_rows.append({
-            "Month":m,
-            "Target (LKR)":tot_l.get("TAR_LKR",0),
-            "Achievement (LKR)":tot_l.get("ACH_LKR",0),
-            "LKR Ach %":tot_l.get("PCT_LKR",0),
-            "LKR Variance":tot_l.get("VAR_LKR",0),
-            "Target (units)":tot_u.get("TAR",0),
-            "Achievement (units)":tot_u.get("ACH",0),
-            "Unit Ach %":tot_u.get("PCT",0),
-            "# DMs":len(dm_k),
-        })
-    sum_df = pd.DataFrame(summary_rows)
+        tl = all_lkr[m].get('TOTAL',{}); tu = all_units[m].get('TOTAL',{})
+        eo_m = all_eo[m]
+        summary.append({"Month":m,
+            "Target (LKR)":tl.get("TAR_LKR",0), "Achievement (LKR)":tl.get("ACH_LKR",0),
+            "LKR Ach %":tl.get("PCT_LKR",0), "LKR Variance":tl.get("VAR_LKR",0),
+            "Target (Units)":tu.get("TAR",0), "Achievement (Units)":tu.get("ACH",0),
+            "Unit Ach %":tu.get("PCT",0),
+            "# DMs":len([e for e in eo_m if is_dm(e)]),
+            "# SBDMs":len([e for e in eo_m if is_sbdm(e)])})
+    sum_df = pd.DataFrame(summary)
 
-    section("OVERALL — ALL MONTHS")
+    section("GRAND TOTAL — ALL MONTHS")
+    g_tar = sum_df["Target (LKR)"].sum()
+    g_ach = sum_df["Achievement (LKR)"].sum()
+    g_pct = (g_ach/g_tar*100) if g_tar else 0
+    g_var = g_ach - g_tar
     g1,g2,g3,g4 = st.columns(4)
-    grand_tar = sum_df["Target (LKR)"].sum()
-    grand_ach = sum_df["Achievement (LKR)"].sum()
-    grand_pct = (grand_ach/grand_tar*100) if grand_tar else 0
-    grand_var = grand_ach - grand_tar
-    kpi_card(g1,"Grand Total Target (LKR)",fmt_lkr(grand_tar),"🎯","c-blue",sub=f"{len(sum_df)} months")
-    kpi_card(g2,"Grand Total Achievement (LKR)",fmt_lkr(grand_ach),"💰","c-green",
-             badge_text=f"{'▲' if grand_var>=0 else '▼'} {fmt_lkr(abs(grand_var))}",
-             badge_cls="up" if grand_var>=0 else "down")
-    kpi_card(g3,"Overall LKR Ach %",f"{grand_pct:.1f}%","📈",
-             "c-green" if grand_pct>=100 else "c-amber", badge_cls=pct_cls(grand_pct))
-    kpi_card(g4,"LKR Variance (total)",fmt_lkr(abs(grand_var)),
-             "📊" if grand_var>=0 else "📉","c-teal" if grand_var>=0 else "c-red",
-             badge_text="▲ Surplus" if grand_var>=0 else "▼ Shortfall",
-             badge_cls="up" if grand_var>=0 else "down")
+    kpi_card(g1,"Grand Target (LKR)",fmt_lkr(g_tar),"🎯","c-blue",sub=f"{len(sum_df)} months")
+    kpi_card(g2,"Grand Achievement (LKR)",fmt_lkr(g_ach),"💰","c-green",
+             badge_text=f"{'▲' if g_var>=0 else '▼'} {fmt_lkr(abs(g_var))}", badge_cls="up" if g_var>=0 else "down")
+    kpi_card(g3,"Overall Ach %",f"{g_pct:.1f}%","📈","c-green" if g_pct>=100 else "c-amber", badge_cls=pct_cls(g_pct))
+    kpi_card(g4,"Total Variance",fmt_lkr(abs(g_var)),"📊" if g_var>=0 else "📉","c-teal" if g_var>=0 else "c-red",
+             badge_text="▲ Surplus" if g_var>=0 else "▼ Shortfall", badge_cls="up" if g_var>=0 else "down")
 
-    st.markdown("<br>", unsafe_allow_html=True)
     section("MONTHLY TREND")
-    cl1, cl2 = st.columns([3, 2])
+    cl1,cl2 = st.columns([3,2])
     with cl1:
-        st.markdown('<div class="card"><div class="card-header"><div>'
-                    '<div class="card-title">Monthly LKR TAR vs ACH</div>'
-                    '</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="card"><div class="card-title">Monthly LKR TAR vs ACH</div>', unsafe_allow_html=True)
         fig_tr = go.Figure()
         fig_tr.add_trace(go.Bar(name="Target", x=sum_df["Month"], y=sum_df["Target (LKR)"],
-            marker=dict(color="#93c5fd",opacity=0.9,line=dict(width=0))))
+            marker=dict(color="#93c5fd",opacity=.9,line=dict(width=0))))
         fig_tr.add_trace(go.Bar(name="Achievement", x=sum_df["Month"], y=sum_df["Achievement (LKR)"],
-            marker=dict(color=[pct_color(p) for p in sum_df["LKR Ach %"]],opacity=0.9,line=dict(width=0)),
-            text=[f"{p:.1f}%" for p in sum_df["LKR Ach %"]],
-            textposition="outside", textfont=dict(size=11)))
-        fig_tr.add_trace(go.Scatter(name="Ach %", x=sum_df["Month"], y=sum_df["LKR Ach %"],
-            mode="lines+markers", yaxis="y2",
-            line=dict(color="#f59e0b",width=2,dash="dot"),
-            marker=dict(size=7,color="#f59e0b",line=dict(color="#fff",width=1.5))))
+            marker=dict(color=[pct_color(p) for p in sum_df["LKR Ach %"]],opacity=.9,line=dict(width=0)),
+            text=[f"{p:.1f}%" for p in sum_df["LKR Ach %"]], textposition="outside", textfont=dict(size=11)))
         fig_tr.update_layout(**PLOTLY_BASE, barmode="group", height=340,
-            margin=dict(t=20,b=60,l=80,r=60),
-            legend=dict(orientation="h",yanchor="bottom",y=1.02,xanchor="right",x=1,bgcolor="rgba(0,0,0,0)"),
+            margin=dict(t=20,b=60,l=80,r=20),
             xaxis=dict(tickfont=dict(size=11,color="#64748b"),showgrid=False),
             yaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=10,color="#94a3b8"),title="LKR"),
-            yaxis2=dict(overlaying="y",side="right",showgrid=False,
-                        tickfont=dict(size=10,color="#f59e0b"),ticksuffix="%"))
-        st.plotly_chart(fig_tr, use_container_width=True, config={"displayModeBar": False})
+            legend=dict(orientation="h",y=1.05,xanchor="right",x=1,bgcolor="rgba(0,0,0,0)"))
+        st.plotly_chart(fig_tr, use_container_width=True, config={"displayModeBar":False})
         st.markdown('</div>', unsafe_allow_html=True)
-
     with cl2:
-        st.markdown('<div class="card"><div class="card-header"><div>'
-                    '<div class="card-title">ACH share by month</div>'
-                    '</div></div>', unsafe_allow_html=True)
-        donut_chart({r["Month"]:r["Achievement (LKR)"] for r in summary_rows
-                     if r["Achievement (LKR)"]>0}, "All Months", key="all_months_pie")
+        st.markdown('<div class="card"><div class="card-title">Monthly Achievement Share</div>', unsafe_allow_html=True)
+        items2 = {r["Month"]:r["Achievement (LKR)"] for r in summary if r["Achievement (LKR)"]>0}
+        if items2:
+            labels2, vals2 = zip(*items2.items())
+            fig_p2 = go.Figure(go.Pie(labels=labels2, values=vals2, hole=.5,
+                marker=dict(colors=PALETTE[:len(labels2)], line=dict(color="#fff",width=2)),
+                textinfo="percent+label", textfont=dict(size=10)))
+            fig_p2.update_layout(**PLOTLY_BASE, height=320, margin=dict(t=10,b=10,l=10,r=10), showlegend=False)
+            st.plotly_chart(fig_p2, use_container_width=True, config={"displayModeBar":False})
         st.markdown('</div>', unsafe_allow_html=True)
 
     section("MONTH SUMMARY TABLE")
-    st.dataframe(
-        sum_df.style
+    st.dataframe(sum_df.style
         .format({"Target (LKR)":"LKR {:,.0f}","Achievement (LKR)":"LKR {:,.0f}",
                  "LKR Ach %":"{:.1f}%","LKR Variance":"LKR {:+,.0f}",
-                 "Target (units)":"{:,.0f}","Achievement (units)":"{:,.0f}","Unit Ach %":"{:.1f}%"})
-        .map(lambda v:("color:#16a34a;font-weight:700" if v>=100 else
-                       "color:#d97706;font-weight:700" if v>=80 else "color:#dc2626;font-weight:700")
+                 "Target (Units)":"{:,.0f}","Achievement (Units)":"{:,.0f}","Unit Ach %":"{:.1f}%"})
+        .map(lambda v: ("color:#059669;font-weight:700" if v>=100 else
+                        "color:#d97706;font-weight:700" if v>=80 else "color:#dc2626;font-weight:700")
              if isinstance(v,(int,float)) else "", subset=["LKR Ach %","Unit Ach %"]),
-        use_container_width=True, hide_index=True, height=min(500,len(sum_df)*44+60))
-    dl2,_=st.columns([1,5])
+        use_container_width=True, hide_index=True)
+    dl2,_ = st.columns([1,5])
     with dl2:
-        st.download_button("⬇️ Export CSV", data=sum_df.to_csv(index=False).encode("utf-8"),
+        st.download_button("⬇️ Export CSV", data=sum_df.to_csv(index=False).encode(),
             file_name=f"{dash_title}_all_months.csv", mime="text/csv", use_container_width=True)
 
-# ╔══════════════════════════════╗
-# ║  TAB — DM BREAKDOWN         ║
-# ╚══════════════════════════════╝
-with tab3:
-    dm_sel_month = st.selectbox("Select Month", month_list,
-        index=month_list.index(sel_month), key="dm_month")
-    dm_lkr_ms = all_lkr[dm_sel_month]
-    dm_drm    = all_dm_rp[dm_sel_month]
-    dm_eo     = all_eo[dm_sel_month]
 
-    dm_trend = []
+# ╔══════════════════════════════════════╗
+# ║  TAB 3 — DM / SBDM BREAKDOWN       ║
+# ╚══════════════════════════════════════╝
+with tab3:
+    dm_month = st.selectbox("Month", month_list, index=month_list.index(sel_month), key="dm_m")
+    dm_lkr   = all_lkr[dm_month]
+    dm_u     = all_units[dm_month]
+    dm_hier  = all_hierarchy[dm_month]
+    dm_eo    = all_eo[dm_month]
+
+    sbdm_list = [e for e in dm_eo if is_sbdm(e)]
+    dm_list   = [e for e in dm_eo if is_dm(e)]
+
+    # ── SBDM summary cards (if present) ──
+    if sbdm_list:
+        section("SBDM PERFORMANCE")
+        cols = st.columns(max(len(sbdm_list), 1))
+        for i, s in enumerate(sbdm_list):
+            if sbdm_filter != "ALL" and s != sbdm_filter: continue
+            d = dm_lkr.get(s,{})
+            st_,sa_,sv_,sp_ = d.get("TAR_LKR",0),d.get("ACH_LKR",0),d.get("VAR_LKR",0),d.get("PCT_LKR",0)
+            sc = pct_color(sp_)
+            cols[i].markdown(f"""<div style="background:linear-gradient(135deg,#312e81,#4338ca);
+                border-radius:16px;padding:1.2rem 1.3rem;color:#fff;border:1px solid #6366f1">
+                <div style="font-size:.6rem;font-weight:700;color:#a5b4fc;text-transform:uppercase;margin-bottom:4px">⭐ Senior BDM</div>
+                <div style="font-size:.95rem;font-weight:800;margin-bottom:10px">{s}</div>
+                <div style="font-size:.72rem;color:#c7d2fe">Target: {fmt_lkr(st_)}</div>
+                <div style="font-size:1rem;font-weight:700;color:{sc}">ACH: {fmt_lkr(sa_)}</div>
+                <div style="display:flex;justify-content:space-between;margin-top:8px">
+                    <span style="font-size:.72rem;color:{'#4ade80' if sv_>=0 else '#f87171'}">
+                        {'▲' if sv_>=0 else '▼'} {fmt_lkr(abs(sv_))}</span>
+                    <span style="font-size:.78rem;font-weight:800;padding:2px 10px;
+                        border-radius:999px;background:rgba(255,255,255,.15);color:#fff">{sp_:.1f}%</span>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+    # ── DM summary cards — ALL DMs ──
+    section(f"DM PERFORMANCE — {dm_month}")
+    filtered_dms = [e for e in dm_list if dm_filter=="ALL" or e==dm_filter]
+    if filtered_dms:
+        dm_cols = st.columns(max(len(filtered_dms), 1))
+        for i, dm in enumerate(filtered_dms):
+            d = dm_lkr.get(dm,{})
+            dt,da,dv,dp = d.get("TAR_LKR",0),d.get("ACH_LKR",0),d.get("VAR_LKR",0),d.get("PCT_LKR",0)
+            bc = pct_color(dp); vc2 = "#059669" if dv>=0 else "#dc2626"
+            bbg = "#d1fae5" if dp>=100 else "#fef3c7" if dp>=80 else "#fee2e2"
+            bfg = "#065f46" if dp>=100 else "#92400e" if dp>=80 else "#991b1b"
+            mw  = max(dt,da,1)
+            dm_cols[i].markdown(f"""<div style="background:#fff;border:1px solid #e8edf5;
+                border-radius:14px;padding:1.1rem 1.2rem;
+                box-shadow:0 2px 8px rgba(0,0,0,.05);border-top:3px solid {bc}">
+                <div style="font-size:.72rem;font-weight:700;color:#64748b;margin-bottom:6px"
+                    title="{dm}">👤 {dm}</div>
+                <div style="font-size:.75rem;color:#1e293b;font-weight:600">Target</div>
+                <div style="font-size:.95rem;font-weight:700;color:#1e293b">{fmt_lkr(dt)}</div>
+                <div style="background:#f1f5f9;border-radius:999px;height:5px;margin-bottom:8px">
+                    <div style="width:{(dt/mw*100):.1f}%;height:100%;background:#3b82f6;border-radius:999px"></div>
+                </div>
+                <div style="font-size:.75rem;color:#1e293b;font-weight:600">Achievement</div>
+                <div style="font-size:.95rem;font-weight:700;color:{bc}">{fmt_lkr(da)}</div>
+                <div style="background:#f1f5f9;border-radius:999px;height:5px;margin-bottom:8px">
+                    <div style="width:{(da/mw*100):.1f}%;height:100%;background:{bc};border-radius:999px"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <div style="font-size:.7rem;font-weight:600;color:{vc2}">{"+" if dv>=0 else ""}{fmt_lkr(dv)}</div>
+                    <span style="font-size:.72rem;font-weight:700;padding:2px 10px;
+                        border-radius:999px;background:{bbg};color:{bfg}">{dp:.1f}%</span>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+    # ── Full Hierarchy (FIXED) ──
+    section(f"FULL HIERARCHY — {dm_month} (LKR)")
+    render_hierarchy(dm_hier, dm_lkr, fmt_fn=fmt_lkr, label="LKR",
+                     sbdm_filter=sbdm_filter, dm_filter=dm_filter)
+
+    section(f"FULL HIERARCHY — {dm_month} (UNITS)")
+    render_hierarchy(dm_hier, dm_u, fmt_fn=fmt_n, label="Units",
+                     sbdm_filter=sbdm_filter, dm_filter=dm_filter)
+
+    # DM trend
+    trend = []
     for m in month_list:
         for e in all_eo[m]:
             if not is_dm(e): continue
-            d = all_lkr[m].get(e, {})
-            if not d.get('TAR_LKR'): continue
-            dm_trend.append(dict(Month=m, DM=e, TAR=d['TAR_LKR'], ACH=d['ACH_LKR'], PCT=d['PCT_LKR']))
+            d = all_lkr[m].get(e,{})
+            if d.get('TAR_LKR',0) > 0:
+                trend.append(dict(Month=m, DM=e, ACH=d['ACH_LKR'], PCT=d['PCT_LKR']))
+    if trend:
+        section("DM LKR TREND")
+        tr_df = pd.DataFrame(trend)
+        if dm_filter != "ALL": tr_df = tr_df[tr_df["DM"]==dm_filter]
+        fig_t = px.line(tr_df, x="Month", y="ACH", color="DM", markers=True,
+                        color_discrete_sequence=PALETTE, labels={"ACH":"Achievement (LKR)"})
+        fig_t.update_layout(**PLOTLY_BASE, height=300,
+            margin=dict(t=10,b=40,l=80,r=20),
+            xaxis=dict(tickfont=dict(size=11,color="#64748b"),showgrid=False),
+            yaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=10,color="#94a3b8"),title="LKR"),
+            legend=dict(bgcolor="rgba(0,0,0,0)",orientation="h",y=1.05,xanchor="right",x=1))
+        st.plotly_chart(fig_t, use_container_width=True, config={"displayModeBar":False})
 
-    section("DM MONTHLY PERFORMANCE CARDS")
-    if dm_trend:
-        dt_df = pd.DataFrame(dm_trend)
-        if dm_filter != "ALL": dt_df = dt_df[dt_df["DM"]==dm_filter]
-        dt_month = dt_df[dt_df["Month"]==dm_sel_month]
-        active_dms = sorted(dt_month["DM"].unique()) if not dt_month.empty else sorted(dt_df["DM"].unique())
-        dm_cols = st.columns(max(len(active_dms),1))
 
-        for i, dm_name in enumerate(active_dms):
-            dm_d = dm_lkr_ms.get(dm_name, {})
-            dm_t = dm_d.get("TAR_LKR",0); dm_a = dm_d.get("ACH_LKR",0)
-            dm_p = dm_d.get("PCT_LKR",0); dm_v = dm_d.get("VAR_LKR",0)
-            bc   = pct_color(dm_p)
-            bbg  = "#d1fae5" if dm_p>=100 else "#fef3c7" if dm_p>=80 else "#fee2e2"
-            bfg  = "#065f46" if dm_p>=100 else "#92400e" if dm_p>=80 else "#991b1b"
-            vc   = "#059669" if dm_v>=0 else "#dc2626"
-            mw   = max(dm_t, dm_a, 1)
-            dm_cols[i].markdown(f"""
-            <div style="background:#fff;border:1px solid #e8edf5;border-radius:14px;
-                        padding:1.1rem 1.2rem;box-shadow:0 2px 8px rgba(0,0,0,0.05);
-                        border-top:3px solid {bc}">
-              <div style="font-size:.72rem;font-weight:700;color:#64748b;overflow:hidden;
-                          text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px"
-                   title="{dm_name}">👤 {dm_name}</div>
-              <div style="font-size:.78rem;color:#1e293b;font-weight:600">Target</div>
-              <div style="font-size:1rem;font-weight:700;color:#1e293b">{fmt_lkr(dm_t)}</div>
-              <div style="background:#f1f5f9;border-radius:999px;height:6px;margin-bottom:8px">
-                <div style="width:{(dm_t/mw*100):.1f}%;height:100%;background:#3b82f6;border-radius:999px"></div>
-              </div>
-              <div style="font-size:.78rem;color:#1e293b;font-weight:600">Achievement</div>
-              <div style="font-size:1rem;font-weight:700;color:{bc}">{fmt_lkr(dm_a)}</div>
-              <div style="background:#f1f5f9;border-radius:999px;height:6px;margin-bottom:8px">
-                <div style="width:{(dm_a/mw*100):.1f}%;height:100%;background:{bc};border-radius:999px"></div>
-              </div>
-              <div style="display:flex;justify-content:space-between;align-items:center">
-                <div style="font-size:.7rem;font-weight:600;color:{vc}">{"+" if dm_v>=0 else ""}{fmt_lkr(dm_v)}</div>
-                <span style="font-size:.72rem;font-weight:700;padding:2px 10px;border-radius:999px;
-                             background:{bbg};color:{bfg}">{dm_p:.1f}%</span>
-              </div>
-            </div>""", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-
-    section(f"DM → RP HIERARCHY — {dm_sel_month} (LKR)")
-    filtered_drm = {k:v for k,v in dm_drm.items()
-                    if (dm_filter=="ALL" or k==dm_filter)
-                    and (dm_lkr_ms.get(k,{}).get("TAR_LKR",0)!=0
-                         or dm_lkr_ms.get(k,{}).get("ACH_LKR",0)!=0)}
-    filtered_drm = {dm:[rp for rp in rps
-                        if dm_lkr_ms.get(rp,{}).get("TAR_LKR",0)!=0
-                        or dm_lkr_ms.get(rp,{}).get("ACH_LKR",0)!=0]
-                    for dm, rps in filtered_drm.items()}
-    render_dm_hierarchy(filtered_drm, dm_lkr_ms, fmt_fn=fmt_lkr, label="LKR")
-
-    if dm_trend:
-        section("DM TREND CHART")
-        fig_dml = px.line(pd.DataFrame(dm_trend), x="Month", y="ACH", color="DM", markers=True,
-                          color_discrete_sequence=PALETTE, labels={"ACH":"Achievement (LKR)"})
-        fig_dml.update_layout(**PLOTLY_BASE, height=320, margin=dict(t=10,b=40,l=80,r=20),
-                              legend=dict(bgcolor="rgba(0,0,0,0)",orientation="h",y=1.05,xanchor="right",x=1),
-                              xaxis=dict(tickfont=dict(size=10.5,color="#64748b"),showgrid=False),
-                              yaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=9.5,color="#94a3b8"),title="LKR"))
-        st.plotly_chart(fig_dml, use_container_width=True, config={"displayModeBar": False})
-
-# ╔══════════════════════════════╗
-# ║  TAB — RP / REP DETAIL      ║
-# ╚══════════════════════════════╝
+# ╔══════════════════════════════════════╗
+# ║  TAB 4 — RP DETAIL                  ║
+# ╚══════════════════════════════════════╝
 with tab4:
-    rp_sel_month = st.selectbox("Select Month", month_list,
-        index=month_list.index(sel_month), key="rp_month")
-    rp_lkr_ms   = all_lkr[rp_sel_month]
-    rp_units_ms = all_units[rp_sel_month]
-    rp_drm      = all_dm_rp[rp_sel_month]
-    rp_eo       = all_eo[rp_sel_month]
+    rp_month = st.selectbox("Month", month_list, index=month_list.index(sel_month), key="rp_m")
+    rp_lkr   = all_lkr[rp_month]
+    rp_u     = all_units[rp_month]
+    rp_hier  = all_hierarchy[rp_month]
+    rp_eo    = all_eo[rp_month]
 
-    section(f"SALES REP PERFORMANCE — {rp_sel_month} (LKR)")
-    rp_to_dm  = {rp:dm for dm,rps in rp_drm.items() for rp in rps}
-    all_reps  = [e for e in rp_eo if e!='TOTAL' and not is_dm(e)]
-    disp_reps = all_reps if dm_filter=="ALL" else [r for r in all_reps if rp_to_dm.get(r)==dm_filter]
-    disp_reps = [r for r in disp_reps
-                 if (rp_lkr_ms.get(r,{}).get("TAR_LKR",0)!=0
-                     or rp_lkr_ms.get(r,{}).get("ACH_LKR",0)!=0
-                     or rp_units_ms.get(r,{}).get("TAR",0)!=0
-                     or rp_units_ms.get(r,{}).get("ACH",0)!=0)]
+    # Build RP maps
+    rp_to_dm = {}; rp_to_sbdm = {}
+    for sk, dm_dict in rp_hier.items():
+        for dk, rps in dm_dict.items():
+            for rp in rps:
+                rp_to_dm[rp]   = dk
+                rp_to_sbdm[rp] = sk if sk != '__NO_SBDM__' else None
 
-    if not disp_reps:
+    all_reps = [e for e in rp_eo if e!='TOTAL' and not is_dm(e) and not is_sbdm(e)]
+    disp = [r for r in all_reps
+            if (dm_filter=="ALL" or rp_to_dm.get(r)==dm_filter)
+            and (sbdm_filter=="ALL" or rp_to_sbdm.get(r)==sbdm_filter)
+            and (rp_lkr.get(r,{}).get('TAR_LKR',0)>0 or rp_lkr.get(r,{}).get('ACH_LKR',0)>0)]
+
+    section(f"RP / SALES REP PERFORMANCE — {rp_month}")
+
+    if not disp:
         st.info("No rep data for current filter.")
     else:
         groups = {}
-        for rp in disp_reps:
+        for rp in disp:
             groups.setdefault(rp_to_dm.get(rp,"Standalone"), []).append(rp)
 
         for owner, rps in groups.items():
-            dm_d = rp_lkr_ms.get(owner, {})
-            dm_t = dm_d.get("TAR_LKR",0); dm_a = dm_d.get("ACH_LKR",0)
-            dm_p = dm_d.get("PCT_LKR",0); dm_v = dm_d.get("VAR_LKR",0)
-            dm_bc = pct_color(dm_p)
-            dm_bg = "#d1fae5" if dm_p>=100 else "#fef3c7" if dm_p>=80 else "#fee2e2"
-            dm_fg = "#065f46" if dm_p>=100 else "#92400e" if dm_p>=80 else "#991b1b"
+            d = rp_lkr.get(owner,{})
+            ot,oa,ov_,op_ = d.get("TAR_LKR",0),d.get("ACH_LKR",0),d.get("VAR_LKR",0),d.get("PCT_LKR",0)
+            bc = pct_color(op_)
+            sbdm_badge = ""
+            for sk, dmd in rp_hier.items():
+                if owner in dmd and sk != '__NO_SBDM__':
+                    sbdm_badge = f'<span style="font-size:.6rem;background:rgba(139,92,246,.2);color:#a78bfa;padding:2px 8px;border-radius:999px;margin-left:8px">⭐ {sk}</span>'
 
-            rp_rows = [dict(name=r,
-                            TAR=rp_lkr_ms.get(r,{}).get('TAR_LKR',0),
-                            ACH=rp_lkr_ms.get(r,{}).get('ACH_LKR',0),
-                            PCT=rp_lkr_ms.get(r,{}).get('PCT_LKR',0),
-                            VAR=rp_lkr_ms.get(r,{}).get('VAR_LKR',0))
-                       for r in rps if rp_lkr_ms.get(r,{}).get('TAR_LKR',0)>0]
-            rp_rows_s = sorted(rp_rows, key=lambda x: x['PCT'], reverse=True)
-
-            html = f"""
-            <div style="border:1px solid #e2e8f0;border-radius:16px;overflow:hidden;
-                        box-shadow:0 3px 14px rgba(0,0,0,0.07);margin-bottom:1.8rem">
-              <div style="background:linear-gradient(135deg,#0a1628 0%,#0d2045 50%,#163870 100%);
-                          padding:1.1rem 1.4rem;border-left:5px solid {dm_bc}">
-                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
-                  <div>
-                    <div style="font-size:.6rem;font-weight:700;color:rgba(255,255,255,0.4);
-                                text-transform:uppercase;letter-spacing:.12em;margin-bottom:3px">District Manager</div>
-                    <div style="font-size:1.05rem;font-weight:800;color:#f0f6ff">👤 {owner}</div>
-                  </div>
-                  <div style="display:flex;gap:0;border:1px solid rgba(255,255,255,0.1);border-radius:10px;overflow:hidden">
-                    <div style="padding:.6rem 1.1rem;border-right:1px solid rgba(255,255,255,0.1)">
-                      <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,0.4);text-transform:uppercase;margin-bottom:3px">Target</div>
-                      <div style="font-size:.95rem;font-weight:700;color:#cbd5e1">{fmt_n(int(dm_t))}</div>
+            st.markdown(f"""<div style="border:1px solid #e2e8f0;border-radius:16px;
+                overflow:hidden;box-shadow:0 3px 14px rgba(0,0,0,.07);margin-bottom:1.8rem">
+                <div style="background:linear-gradient(135deg,#0a1628,#163870);
+                    padding:1rem 1.4rem;border-left:5px solid {bc}">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+                        <div>
+                            <div style="font-size:.6rem;font-weight:700;color:rgba(255,255,255,.4);
+                                text-transform:uppercase;margin-bottom:3px">District Manager</div>
+                            <div style="font-size:1rem;font-weight:800;color:#f0f6ff">👤 {owner}{sbdm_badge}</div>
+                        </div>
+                        <div style="display:flex;gap:0;border:1px solid rgba(255,255,255,.15);border-radius:10px;overflow:hidden">
+                            <div style="padding:.5rem 1rem;border-right:1px solid rgba(255,255,255,.15)">
+                                <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:2px">Target</div>
+                                <div style="font-size:.9rem;font-weight:700;color:#cbd5e1">{fmt_lkr(ot)}</div>
+                            </div>
+                            <div style="padding:.5rem 1rem;border-right:1px solid rgba(255,255,255,.15)">
+                                <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:2px">Achievement</div>
+                                <div style="font-size:.9rem;font-weight:700;color:{bc}">{fmt_lkr(oa)}</div>
+                            </div>
+                            <div style="padding:.5rem 1rem">
+                                <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;margin-bottom:2px">Ach %</div>
+                                <div style="font-size:.9rem;font-weight:800;color:{bc}">{op_:.1f}%</div>
+                            </div>
+                        </div>
                     </div>
-                    <div style="padding:.6rem 1.1rem;border-right:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04)">
-                      <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,0.4);text-transform:uppercase;margin-bottom:3px">Achievement</div>
-                      <div style="font-size:.95rem;font-weight:700;color:{dm_bc}">{fmt_n(int(dm_a))}</div>
-                    </div>
-                    <div style="padding:.6rem 1.1rem;border-right:1px solid rgba(255,255,255,0.1)">
-                      <div style="font-size:.58rem;font-weight:700;color:rgba(255,255,255,0.4);text-transform:uppercase;margin-bottom:3px">Variance</div>
-                      <div style="font-size:.95rem;font-weight:700;color:{dm_bc}">{"+" if dm_v>=0 else ""}{fmt_n(int(dm_v))}</div>
-                    </div>
-                    <div style="padding:.6rem 1.1rem;display:flex;align-items:center">
-                      <span style="font-size:.9rem;font-weight:800;padding:4px 14px;border-radius:8px;
-                                   background:{dm_bg};color:{dm_fg}">{dm_p:.1f}%</span>
-                    </div>
-                  </div>
-                </div>
-                <div style="margin-top:10px;background:rgba(255,255,255,0.1);border-radius:999px;height:5px;overflow:hidden">
-                  <div style="width:{min(dm_p,100):.1f}%;height:100%;background:{dm_bc};border-radius:999px"></div>
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;padding:7px 14px;background:#f8fafc;border-bottom:2px solid #e2e8f0">
-                <div style="width:28px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">#</div>
-                <div style="flex:1.8;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Sales Rep</div>
-                <div style="width:140px;text-align:right;font-size:.6rem;font-weight:700;color:#64748b;text-transform:uppercase">🎯 Target</div>
-                <div style="width:140px;text-align:right;font-size:.6rem;font-weight:700;color:#64748b;text-transform:uppercase">✅ Achievement</div>
-                <div style="width:110px;text-align:right;font-size:.6rem;font-weight:700;color:#64748b;text-transform:uppercase">Variance</div>
-                <div style="flex:1.2;padding:0 12px;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Progress</div>
-                <div style="width:62px;text-align:center;font-size:.6rem;font-weight:700;color:#94a3b8;text-transform:uppercase">Ach %</div>
-              </div>"""
+                </div>""", unsafe_allow_html=True)
 
-            for i, r in enumerate(rp_rows_s):
-                p=r['PCT']; c=pct_color(p); var=r['VAR']; vc2="#059669" if var>=0 else "#dc2626"
-                bg="#f0fdf4" if p>=100 else "#fffbeb" if p>=80 else "#ffffff"
-                pbg="#d1fae5" if p>=100 else "#fef3c7" if p>=80 else "#fee2e2"
-                pfg="#065f46" if p>=100 else "#92400e" if p>=80 else "#991b1b"
-                html += f"""
-              <div style="display:flex;align-items:center;padding:11px 14px;background:{bg};border-bottom:1px solid #f1f5f9">
-                <div style="width:28px;font-size:.68rem;font-weight:700;color:#94a3b8">#{i+1}</div>
-                <div style="flex:1.8;font-size:.85rem;font-weight:600;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:10px">{r['name']}</div>
-                <div style="width:140px;text-align:right;padding-right:6px">
-                  <div style="font-size:.65rem;color:#94a3b8;font-weight:600;text-transform:uppercase;margin-bottom:1px">Target</div>
-                  <div style="font-size:.92rem;font-weight:700;color:#334155">{fmt_n(int(r['TAR']))}</div>
-                </div>
-                <div style="width:140px;text-align:right;padding-right:6px">
-                  <div style="font-size:.65rem;color:#94a3b8;font-weight:600;text-transform:uppercase;margin-bottom:1px">Achievement</div>
-                  <div style="font-size:.92rem;font-weight:800;color:{c}">{fmt_n(int(r['ACH']))}</div>
-                </div>
-                <div style="width:110px;text-align:right;padding-right:6px">
-                  <div style="font-size:.65rem;color:#94a3b8;font-weight:600;text-transform:uppercase;margin-bottom:1px">Variance</div>
-                  <div style="font-size:.88rem;font-weight:700;color:{vc2}">{"+" if var>=0 else ""}{fmt_n(int(var))}</div>
-                </div>
-                <div style="flex:1.2;padding:0 12px">
-                  <div style="background:#e8edf5;border-radius:999px;height:9px;overflow:hidden">
-                    <div style="width:{min(p,100):.1f}%;height:100%;background:{c};border-radius:999px;opacity:.85"></div>
-                  </div>
-                </div>
-                <div style="width:62px;text-align:center">
-                  <span style="font-size:.75rem;font-weight:800;padding:3px 8px;border-radius:7px;background:{pbg};color:{pfg}">{p:.1f}%</span>
-                </div>
-              </div>"""
-            html += "</div>"
-            st.markdown(html, unsafe_allow_html=True)
+            rp_rows = sorted(
+                [dict(name=r, TAR=rp_lkr.get(r,{}).get('TAR_LKR',0),
+                      ACH=rp_lkr.get(r,{}).get('ACH_LKR',0),
+                      PCT=rp_lkr.get(r,{}).get('PCT_LKR',0),
+                      VAR=rp_lkr.get(r,{}).get('VAR_LKR',0))
+                 for r in rps if rp_lkr.get(r,{}).get('TAR_LKR',0)>0],
+                key=lambda x: x['PCT'], reverse=True)
 
-        section("REP ACHIEVEMENT % RANKING (LKR)")
-        achievement_rows_ui(
-            [dict(name=r, TAR=rp_lkr_ms.get(r,{}).get('TAR_LKR',0),
-                  ACH=rp_lkr_ms.get(r,{}).get('ACH_LKR',0),
-                  PCT=rp_lkr_ms.get(r,{}).get('PCT_LKR',0))
-             for r in disp_reps if rp_lkr_ms.get(r,{}).get('TAR_LKR',0)>0],
-            fmt_fn=fmt_lkr)
+            h = """<div style="display:flex;align-items:center;padding:7px 14px;
+                background:#f8fafc;border-bottom:2px solid #e2e8f0;
+                font-size:.63rem;font-weight:700;color:#94a3b8;text-transform:uppercase">
+                <div style="width:26px">#</div>
+                <div style="flex:1.8">Sales Rep</div>
+                <div style="width:130px;text-align:right">Target</div>
+                <div style="width:130px;text-align:right">Achievement</div>
+                <div style="width:110px;text-align:right">Variance</div>
+                <div style="flex:1.2;padding:0 12px">Progress</div>
+                <div style="width:60px;text-align:center">Ach %</div>
+            </div>"""
+            for i2, r2 in enumerate(rp_rows):
+                p2=r2['PCT']; c2=pct_color(p2); v2=r2['VAR']
+                vc3="#059669" if v2>=0 else "#dc2626"
+                bg2="#f0fdf4" if p2>=100 else "#fffbeb" if p2>=80 else "#fff"
+                pbg="#d1fae5" if p2>=100 else "#fef3c7" if p2>=80 else "#fee2e2"
+                pfg="#065f46" if p2>=100 else "#92400e" if p2>=80 else "#991b1b"
+                h += f"""<div style="display:flex;align-items:center;padding:10px 14px;
+                    background:{bg2};border-bottom:1px solid #f1f5f9">
+                    <div style="width:26px;font-size:.68rem;font-weight:700;color:#94a3b8">#{i2+1}</div>
+                    <div style="flex:1.8;font-size:.84rem;font-weight:600;color:#1e293b;
+                        overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{r2['name']}</div>
+                    <div style="width:130px;text-align:right;font-size:.85rem;color:#334155">{fmt_lkr(r2['TAR'])}</div>
+                    <div style="width:130px;text-align:right;font-size:.85rem;font-weight:700;color:{c2}">{fmt_lkr(r2['ACH'])}</div>
+                    <div style="width:110px;text-align:right;font-size:.82rem;font-weight:700;color:{vc3}">
+                        {"+" if v2>=0 else ""}{fmt_lkr(v2)}</div>
+                    <div style="flex:1.2;padding:0 12px">
+                        <div style="background:#e8edf5;border-radius:999px;height:8px;overflow:hidden">
+                            <div style="width:{min(p2,100):.1f}%;height:100%;background:{c2};border-radius:999px;opacity:.85"></div>
+                        </div>
+                    </div>
+                    <div style="width:60px;text-align:center">
+                        <span style="font-size:.74rem;font-weight:800;padding:3px 7px;
+                            border-radius:7px;background:{pbg};color:{pfg}">{p2:.1f}%</span>
+                    </div>
+                </div>"""
+            st.markdown(h + "</div>", unsafe_allow_html=True)
 
+        # Summary table
         rp_tbl = [{"Rep":r, "Under DM":rp_to_dm.get(r,"—"),
-                   "Target LKR":round(rp_lkr_ms.get(r,{}).get('TAR_LKR',0)),
-                   "Achievement LKR":round(rp_lkr_ms.get(r,{}).get('ACH_LKR',0)),
-                   "LKR Ach%":round(rp_lkr_ms.get(r,{}).get('PCT_LKR',0),1),
-                   "LKR Variance":round(rp_lkr_ms.get(r,{}).get('VAR_LKR',0)),
-                   "Target Units":round(rp_units_ms.get(r,{}).get('TAR',0)),
-                   "Achievement Units":round(rp_units_ms.get(r,{}).get('ACH',0)),
-                   "Unit Ach%":round(rp_units_ms.get(r,{}).get('PCT',0),1)}
-                  for r in disp_reps]
+                   "SBDM":rp_to_sbdm.get(r) or "—",
+                   "Target LKR":round(rp_lkr.get(r,{}).get('TAR_LKR',0)),
+                   "Achievement LKR":round(rp_lkr.get(r,{}).get('ACH_LKR',0)),
+                   "LKR Ach %":round(rp_lkr.get(r,{}).get('PCT_LKR',0),1),
+                   "Target Units":round(rp_u.get(r,{}).get('TAR',0)),
+                   "Achievement Units":round(rp_u.get(r,{}).get('ACH',0)),
+                   "Unit Ach %":round(rp_u.get(r,{}).get('PCT',0),1)}
+                  for r in disp]
         if rp_tbl:
+            section("REP SUMMARY TABLE")
             rp_df = pd.DataFrame(rp_tbl)
             st.dataframe(rp_df.style.format({
-                "Target LKR":"{:,.0f}","Achievement LKR":"{:,.0f}","LKR Ach%":"{:.1f}%",
-                "LKR Variance":"{:+,.0f}","Target Units":"{:,.0f}",
-                "Achievement Units":"{:,.0f}","Unit Ach%":"{:.1f}%"}),
+                "Target LKR":"{:,.0f}","Achievement LKR":"{:,.0f}","LKR Ach %":"{:.1f}%",
+                "Target Units":"{:,.0f}","Achievement Units":"{:,.0f}","Unit Ach %":"{:.1f}%"}),
                 use_container_width=True, hide_index=True)
-            dl3,_=st.columns([1,5])
+            dl3,_ = st.columns([1,5])
             with dl3:
-                st.download_button("⬇️ Export CSV", data=rp_df.to_csv(index=False).encode("utf-8"),
-                    file_name=f"{dash_title}_reps_{rp_sel_month}.csv", mime="text/csv", use_container_width=True)
+                st.download_button("⬇️ Export CSV", data=rp_df.to_csv(index=False).encode(),
+                    file_name=f"{dash_title}_reps_{rp_month}.csv", mime="text/csv", use_container_width=True)
 
-# ╔══════════════════════════════╗
-# ║  TAB — PRODUCTS             ║
-# ╚══════════════════════════════╝
+
+# ╔══════════════════════════════════════╗
+# ║  TAB 5 — PRODUCTS                   ║
+# ╚══════════════════════════════════════╝
 with tab5:
     section(f"PRODUCT BREAKDOWN — {sel_month}")
+    prd = all_prod.get(sel_month, pd.DataFrame())
     if prd.empty:
         st.info("No product data.")
     else:
@@ -1242,10 +1053,8 @@ with tab5:
         prd_f    = prd_f[prd_f["TAR"]>0].copy()
 
         if not prd_f.empty:
-            prod_sum = prd_f.groupby("PRODUCT").agg(
-                TAR=("TAR","sum"), ACH=("ACH","sum")).reset_index()
-            prod_sum["PCT"] = prod_sum.apply(
-                lambda r: r["ACH"]/r["TAR"]*100 if r["TAR"]>0 else 0, axis=1)
+            prod_sum = prd_f.groupby("PRODUCT").agg(TAR=("TAR","sum"), ACH=("ACH","sum")).reset_index()
+            prod_sum["PCT"] = prod_sum.apply(lambda r: r["ACH"]/r["TAR"]*100 if r["TAR"]>0 else 0, axis=1)
             prod_sum = prod_sum.sort_values("TAR", ascending=False)
 
             p1,p2,p3,p4 = st.columns(4)
@@ -1253,224 +1062,52 @@ with tab5:
             kpi_card(p2,"Total Unit Target",fmt_n(prod_sum["TAR"].sum()),"🎯","c-indigo")
             kpi_card(p3,"Total Unit Achievement",fmt_n(prod_sum["ACH"].sum()),"✅","c-green")
             best_p = prod_sum.loc[prod_sum["PCT"].idxmax(),"PRODUCT"]
-            kpi_card(p4,"Best Product (units)",best_p,"🏆","c-amber",
-                     badge_text=f"{prod_sum['PCT'].max():.1f}%",badge_cls="up")
+            kpi_card(p4,"Best Product",best_p,"🏆","c-amber",
+                     badge_text=f"{prod_sum['PCT'].max():.1f}%", badge_cls="up")
 
-            st.markdown("<br>", unsafe_allow_html=True)
-            cp1, cp2 = st.columns(2)
+            cp1,cp2 = st.columns(2)
             with cp1:
                 st.markdown('<div class="card"><div class="card-title">Unit TAR vs ACH by Product</div>', unsafe_allow_html=True)
                 fig_pb = go.Figure()
                 fig_pb.add_trace(go.Bar(name="Target", x=prod_sum["PRODUCT"], y=prod_sum["TAR"],
-                    marker=dict(color="#93c5fd",line=dict(width=0)),width=0.4,offset=-0.2))
+                    marker=dict(color="#93c5fd",line=dict(width=0)), width=0.4, offset=-0.2))
                 fig_pb.add_trace(go.Bar(name="Achievement", x=prod_sum["PRODUCT"], y=prod_sum["ACH"],
                     marker=dict(color=[pct_color(p) for p in prod_sum["PCT"]],opacity=.9,line=dict(width=0)),
-                    width=0.4,offset=0.1,
-                    text=[f"{p:.1f}%" for p in prod_sum["PCT"]],textposition="outside",textfont=dict(size=10)))
-                fig_pb.update_layout(**PLOTLY_BASE,barmode="overlay",height=320,
+                    width=0.4, offset=0.1,
+                    text=[f"{p:.1f}%" for p in prod_sum["PCT"]], textposition="outside", textfont=dict(size=10)))
+                fig_pb.update_layout(**PLOTLY_BASE, barmode="overlay", height=320,
                     margin=dict(t=10,b=80,l=60,r=10),
                     xaxis=dict(tickangle=-35,tickfont=dict(size=10,color="#64748b"),showgrid=False),
                     yaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=10,color="#94a3b8"),title="Units"),
                     legend=dict(orientation="h",y=1.05,bgcolor="rgba(0,0,0,0)"))
-                st.plotly_chart(fig_pb, use_container_width=True, config={"displayModeBar": False})
+                st.plotly_chart(fig_pb, use_container_width=True, config={"displayModeBar":False})
                 st.markdown('</div>', unsafe_allow_html=True)
 
             with cp2:
-                st.markdown('<div class="card"><div class="card-title">Unit Achievement % by Product</div>', unsafe_allow_html=True)
+                st.markdown('<div class="card"><div class="card-title">Unit Ach % by Product</div>', unsafe_allow_html=True)
                 ps = prod_sum.sort_values("PCT", ascending=True)
                 fig_h = go.Figure(go.Bar(
-                    y=ps["PRODUCT"],x=ps["PCT"],orientation="h",
+                    y=ps["PRODUCT"], x=ps["PCT"], orientation="h",
                     marker=dict(color=[pct_color(p) for p in ps["PCT"]],opacity=.85,line=dict(width=0)),
-                    text=[f"{p:.1f}%" for p in ps["PCT"]],textposition="outside"))
-                fig_h.add_vline(x=100,line_color="#22c55e",line_dash="dot",line_width=1.5)
-                fig_h.update_layout(**PLOTLY_BASE,height=320,
-                    margin=dict(t=10,b=40,l=200,r=60),
+                    text=[f"{p:.1f}%" for p in ps["PCT"]], textposition="outside"))
+                fig_h.add_vline(x=100, line_color="#22c55e", line_dash="dot", line_width=1.5)
+                fig_h.update_layout(**PLOTLY_BASE, height=320,
+                    margin=dict(t=10,b=40,l=180,r=60),
                     xaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=10,color="#94a3b8"),ticksuffix="%"),
                     yaxis=dict(tickfont=dict(size=10,color="#64748b")))
-                st.plotly_chart(fig_h, use_container_width=True, config={"displayModeBar": False})
+                st.plotly_chart(fig_h, use_container_width=True, config={"displayModeBar":False})
                 st.markdown('</div>', unsafe_allow_html=True)
 
             section("PRODUCT DETAIL TABLE")
-            prod_tbl = prod_sum[["PRODUCT","TAR","ACH","PCT"]].copy()
-            prod_tbl.columns = ["Product","Target (units)","Achievement (units)","Unit Ach %"]
-            prod_tbl["Variance (units)"] = prod_tbl["Achievement (units)"] - prod_tbl["Target (units)"]
+            prod_tbl = prod_sum.copy()
+            prod_tbl["Variance"] = prod_tbl["ACH"] - prod_tbl["TAR"]
+            prod_tbl.columns = ["Product","Target (Units)","Achievement (Units)","Unit Ach %","Variance (Units)"]
             st.dataframe(prod_tbl.style.format({
-                "Target (units)":"{:,.0f}","Achievement (units)":"{:,.0f}",
-                "Unit Ach %":"{:.1f}%","Variance (units)":"{:+,.0f}"}),
+                "Target (Units)":"{:,.0f}","Achievement (Units)":"{:,.0f}",
+                "Unit Ach %":"{:.1f}%","Variance (Units)":"{:+,.0f}"}),
                 use_container_width=True, hide_index=True)
 
-# ╔══════════════════════════════╗
-# ║  TAB — LKR TREND            ║
-# ╚══════════════════════════════╝
-with tab6:
-    section("LKR ACHIEVEMENT TREND — ALL MONTHS × ALL ENTITIES")
-    view = st.selectbox("View", ["Division TOTAL","Each DM","Each RP/Rep"], key="lkr_view")
-
-    trend_rows = []
-    for m in month_list:
-        for e in all_eo[m]:
-            d = all_lkr[m].get(e, {})
-            if not d.get('TAR_LKR'): continue
-            if view=="Division TOTAL" and e!="TOTAL": continue
-            if view=="Each DM" and not is_dm(e): continue
-            if view=="Each RP/Rep" and (is_dm(e) or e=="TOTAL"): continue
-            trend_rows.append(dict(Month=m, Entity=e,
-                TAR_LKR=d['TAR_LKR'], ACH_LKR=d['ACH_LKR'],
-                PCT_LKR=d['PCT_LKR'], VAR_LKR=d['VAR_LKR']))
-
-    if trend_rows:
-        tr_df = pd.DataFrame(trend_rows)
-        col_t1, col_t2 = st.columns(2)
-        with col_t1:
-            fig_lkr = px.line(tr_df, x="Month", y="ACH_LKR", color="Entity", markers=True,
-                color_discrete_sequence=PALETTE, labels={"ACH_LKR":"Achievement (LKR)"},
-                hover_data={"TAR_LKR":":.0f","PCT_LKR":":.1f"})
-            fig_lkr.update_layout(**PLOTLY_BASE, height=320, margin=dict(t=10,b=40,l=80,r=20),
-                legend=dict(bgcolor="rgba(0,0,0,0)",orientation="h",y=1.05,xanchor="right",x=1),
-                xaxis=dict(tickfont=dict(size=11,color="#64748b"),showgrid=False),
-                yaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=10,color="#94a3b8"),title="LKR"))
-            st.plotly_chart(fig_lkr, use_container_width=True, config={"displayModeBar": False})
-
-        with col_t2:
-            fig_pct = px.line(tr_df, x="Month", y="PCT_LKR", color="Entity", markers=True,
-                color_discrete_sequence=PALETTE, labels={"PCT_LKR":"LKR Ach %"})
-            fig_pct.add_hline(y=100, line_color="#22c55e", line_dash="dot", line_width=1.5)
-            fig_pct.update_layout(**PLOTLY_BASE, height=320, margin=dict(t=10,b=40,l=60,r=20),
-                legend=dict(bgcolor="rgba(0,0,0,0)",orientation="h",y=1.05,xanchor="right",x=1),
-                xaxis=dict(tickfont=dict(size=11,color="#64748b"),showgrid=False),
-                yaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=10,color="#94a3b8"),
-                           title="LKR Ach %",ticksuffix="%"))
-            st.plotly_chart(fig_pct, use_container_width=True, config={"displayModeBar": False})
-
-        section("FULL LKR TABLE")
-        full_tbl = tr_df.rename(columns={"TAR_LKR":"Target (LKR)","ACH_LKR":"Achievement (LKR)",
-                                          "PCT_LKR":"Ach %","VAR_LKR":"Variance (LKR)"})
-        st.dataframe(full_tbl.style.format({
-            "Target (LKR)":"LKR {:,.0f}","Achievement (LKR)":"LKR {:,.0f}",
-            "Ach %":"{:.1f}%","Variance (LKR)":"LKR {:+,.0f}"}),
-            use_container_width=True, hide_index=True, height=min(500,len(full_tbl)*40+60))
-        dl6,_=st.columns([1,5])
-        with dl6:
-            st.download_button("⬇️ Export LKR CSV", data=full_tbl.to_csv(index=False).encode("utf-8"),
-                file_name=f"{dash_title}_lkr_trend.csv", mime="text/csv", use_container_width=True)
-
-# ╔══════════════════════════════╗
-# ║  TAB — CUMULATIVE           ║
-# ╚══════════════════════════════╝
-with tab7:
-    section("📊 CUMULATIVE ACHIEVEMENT ANALYSIS")
-    cum_c1, cum_c2, cum_c3 = st.columns(3)
-    with cum_c1:
-        cum_sel_month = st.selectbox("Cumulative up to Month", month_list,
-                                      index=len(month_list)-1, key="cum_month")
-    with cum_c2:
-        cum_entity_opts = ["ALL (TOTAL only)"] + [e for e in all_entities if e!='TOTAL']
-        cum_sel_entity  = st.selectbox("Entity / Person", cum_entity_opts, key="cum_entity")
-    with cum_c3:
-        cum_product_opts = ["ALL Products"] + sorted(all_products)
-        cum_sel_product  = st.selectbox("Product", cum_product_opts, key="cum_product")
-
-    months_up_to   = month_list[:month_list.index(cum_sel_month)+1]
-    entity_for_kpi = 'TOTAL' if cum_sel_entity=="ALL (TOTAL only)" else cum_sel_entity
-
-    cum_tar_total = cum_ach_total = 0.0
-    for product in all_products:
-        if cum_sel_product!="ALL Products" and product!=cum_sel_product: continue
-        d = cum_data.get(cum_sel_month,{}).get(entity_for_kpi,{}).get(product,{})
-        cum_tar_total += d.get('CUM_TAR', 0.0)
-        cum_ach_total += d.get('CUM_ACH', 0.0)
-
-    cum_pct_overall = (cum_ach_total/cum_tar_total*100) if cum_tar_total>0 else 0.0
-    cum_var_overall = cum_ach_total - cum_tar_total
-
-    section(f"CUMULATIVE KPIs — APR → {cum_sel_month}")
-    ck1, ck2, ck3, ck4 = st.columns(4)
-    kpi_card(ck1,"Cumulative Target (units)",fmt_n(cum_tar_total),"🎯","c-blue",
-             sub=f"{len(months_up_to)} months")
-    kpi_card(ck2,"Cumulative Achievement (units)",fmt_n(cum_ach_total),"✅","c-green",
-             badge_text=f"{'▲' if cum_var_overall>=0 else '▼'} {fmt_n(abs(cum_var_overall))}",
-             badge_cls=pct_cls(cum_pct_overall))
-    kpi_card(ck3,"Cumulative Ach %",f"{cum_pct_overall:.1f}%","📈",
-             "c-green" if cum_pct_overall>=100 else "c-amber" if cum_pct_overall>=80 else "c-red",
-             badge_text="On Track" if cum_pct_overall>=100 else "Below Target",
-             badge_cls=pct_cls(cum_pct_overall))
-    kpi_card(ck4,"Months Accumulated",str(len(months_up_to)),"📅","c-indigo",
-             sub=" → ".join(months_up_to))
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    cum_chart_rows = []
-    for product in (all_products if cum_sel_product=="ALL Products" else [cum_sel_product]):
-        for m in months_up_to:
-            d = cum_data.get(m,{}).get(entity_for_kpi,{}).get(product,{})
-            pct = d.get('CUM_PCT',0.0); cum_t = d.get('CUM_TAR',0.0); cum_a = d.get('CUM_ACH',0.0)
-            if cum_t>0:
-                cum_chart_rows.append(dict(Month=m,Product=product,CUM_PCT=pct,CUM_TAR=cum_t,CUM_ACH=cum_a))
-
-    if cum_chart_rows:
-        cc_df = pd.DataFrame(cum_chart_rows)
-        col_line, col_bar_cum = st.columns([3, 2])
-        with col_line:
-            fig_cl = px.line(cc_df,x="Month",y="CUM_PCT",color="Product",markers=True,
-                color_discrete_sequence=PALETTE,labels={"CUM_PCT":"Cumulative Ach %"},
-                hover_data={"CUM_TAR":":,.0f","CUM_ACH":":,.0f"})
-            fig_cl.add_hline(y=100,line_color="#22c55e",line_dash="dot",line_width=2)
-            fig_cl.update_layout(**PLOTLY_BASE,height=360,margin=dict(t=10,b=40,l=70,r=20),
-                legend=dict(bgcolor="rgba(0,0,0,0)",orientation="h",y=1.05,xanchor="right",x=1,font=dict(size=10)),
-                xaxis=dict(tickfont=dict(size=11,color="#64748b"),showgrid=False),
-                yaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=10,color="#94a3b8"),
-                           title="Cumulative Ach %",ticksuffix="%"))
-            st.plotly_chart(fig_cl, use_container_width=True, config={"displayModeBar": False})
-
-        with col_bar_cum:
-            last_m = cc_df[cc_df["Month"]==cum_sel_month].sort_values("CUM_PCT",ascending=True)
-            if not last_m.empty:
-                fig_cb = go.Figure(go.Bar(
-                    y=last_m["Product"],x=last_m["CUM_PCT"],orientation="h",
-                    marker=dict(color=[pct_color(p) for p in last_m["CUM_PCT"]],opacity=0.85,line=dict(width=0)),
-                    text=[f"{p:.1f}%" for p in last_m["CUM_PCT"]],textposition="outside"))
-                fig_cb.add_vline(x=100,line_color="#22c55e",line_dash="dot",line_width=1.5)
-                fig_cb.update_layout(**PLOTLY_BASE,height=360,margin=dict(t=10,b=40,l=200,r=70),
-                    xaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=10,color="#94a3b8"),ticksuffix="%"),
-                    yaxis=dict(tickfont=dict(size=10,color="#64748b")))
-                st.plotly_chart(fig_cb, use_container_width=True, config={"displayModeBar": False})
-
-    section(f"ENTITY COMPARISON — Cumulative % as of {cum_sel_month}")
-    comp_product = st.selectbox("Product for Entity Comparison",
-                                 ["ALL Products"]+sorted(all_products), key="cum_comp_product")
-    comp_rows = []
-    for entity in all_entities:
-        if entity=='TOTAL': continue
-        prods_c = all_products if comp_product=="ALL Products" else [comp_product]
-        c_tar = sum(cum_data.get(cum_sel_month,{}).get(entity,{}).get(p,{}).get('CUM_TAR',0.0) for p in prods_c)
-        c_ach = sum(cum_data.get(cum_sel_month,{}).get(entity,{}).get(p,{}).get('CUM_ACH',0.0) for p in prods_c)
-        c_pct = (c_ach/c_tar*100) if c_tar>0 else 0.0
-        if c_tar>0:
-            comp_rows.append(dict(Entity=entity, Type="DM" if is_dm(entity) else "RP/Rep",
-                                   CUM_TAR=c_tar, CUM_ACH=c_ach, CUM_PCT=c_pct, CUM_VAR=c_ach-c_tar))
-    if comp_rows:
-        comp_df = pd.DataFrame(comp_rows).sort_values("CUM_PCT", ascending=False)
-        achievement_rows_ui(
-            [dict(name=r["Entity"],TAR=r["CUM_TAR"],ACH=r["CUM_ACH"],PCT=r["CUM_PCT"])
-             for _,r in comp_df.iterrows()], fmt_fn=fmt_n)
-        comp_disp = comp_df.rename(columns={
-            "CUM_TAR":"Cum Target","CUM_ACH":"Cum Achievement",
-            "CUM_PCT":"Cum Ach %","CUM_VAR":"Cum Variance"})
-        st.dataframe(comp_disp.style.format({
-            "Cum Target":"{:,.0f}","Cum Achievement":"{:,.0f}",
-            "Cum Ach %":"{:.1f}%","Cum Variance":"{:+,.0f}"}),
-            use_container_width=True, hide_index=True,
-            height=min(500,len(comp_disp)*42+60))
-        dl7,_=st.columns([1,5])
-        with dl7:
-            st.download_button("⬇️ Export Cumulative CSV",
-                data=comp_disp.to_csv(index=False).encode("utf-8"),
-                file_name=f"{dash_title}_cumulative_{cum_sel_month}.csv", mime="text/csv",
-                use_container_width=True)
-
 # ══════════════════════════════════════════════════════
-# FOOTER
-# ══════════════════════════════════════════════════════
-st.markdown(
-    f'<div class="dash-footer">Universal Sales Intelligence Hub · {dash_title} · {sel_month} · v12.0</div>',
-    unsafe_allow_html=True)
+st.markdown(f'<div style="text-align:center;font-size:.72rem;color:#94a3b8;margin-top:2.5rem;'
+            f'padding-top:1rem;border-top:1px solid #e2e8f0">'
+            f'Universal Sales Intelligence Hub · {dash_title} · v14.0</div>', unsafe_allow_html=True)
