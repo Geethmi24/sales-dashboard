@@ -143,6 +143,13 @@ def fmt_lkr(n):
         return f"LKR {v:,.0f}"
     except: return str(n)
 
+def safe_round(v, d=0):
+    try:
+        f = float(v)
+        if np.isnan(f) or np.isinf(f): return 0
+        return round(f, d)
+    except: return 0
+
 def pct_badge(p): return "pct-green" if p >= 100 else "pct-amber" if p >= 80 else "pct-red"
 def pct_color(p): return "#16a34a" if p >= 100 else "#d97706" if p >= 80 else "#dc2626"
 def pct_cls(p):   return "up" if p >= 100 else "neu" if p >= 80 else "down"
@@ -601,12 +608,13 @@ st.markdown(f"""<div class="page-header">
 # ══════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📆 Overview",
     "📅 All Months",
     "👥 DM / SBDM Breakdown",
     "🏢 RP Detail",
     "📦 Products",
+    "📊 Cumulative",
 ])
 
 # ╔══════════════════════════════════════╗
@@ -699,13 +707,13 @@ with tab1:
         l = ov_lkr.get(e,{}); u = ov_units.get(e,{})
         et = "TOTAL" if e=="TOTAL" else "SBDM" if is_sbdm(e) else "DM" if is_dm(e) else "RP/Rep"
         tbl.append({"Entity":e,"Type":et,
-                    "Target LKR":round(l.get("TAR_LKR",0)),
-                    "Achievement LKR":round(l.get("ACH_LKR",0)),
-                    "LKR Ach %":round(l.get("PCT_LKR",0),1),
-                    "LKR Variance":round(l.get("VAR_LKR",0)),
-                    "Target Units":round(u.get("TAR",0)),
-                    "Achievement Units":round(u.get("ACH",0)),
-                    "Unit Ach %":round(u.get("PCT",0),1)})
+                    "Target LKR":safe_round(l.get("TAR_LKR",0)),
+                    "Achievement LKR":safe_round(l.get("ACH_LKR",0)),
+                    "LKR Ach %":safe_round(l.get("PCT_LKR",0),1),
+                    "LKR Variance":safe_round(l.get("VAR_LKR",0)),
+                    "Target Units":safe_round(u.get("TAR",0)),
+                    "Achievement Units":safe_round(u.get("ACH",0)),
+                    "Unit Ach %":safe_round(u.get("PCT",0),1)})
     tbl_df = pd.DataFrame(tbl)
     num_cols = ["Target LKR","Achievement LKR","LKR Variance","Target Units","Achievement Units"]
     tbl_df = tbl_df[~(tbl_df[num_cols]==0).all(axis=1)]
@@ -1018,12 +1026,12 @@ with tab4:
         # Summary table
         rp_tbl = [{"Rep":r, "Under DM":rp_to_dm.get(r,"—"),
                    "SBDM":rp_to_sbdm.get(r) or "—",
-                   "Target LKR":round(rp_lkr.get(r,{}).get('TAR_LKR',0)),
-                   "Achievement LKR":round(rp_lkr.get(r,{}).get('ACH_LKR',0)),
-                   "LKR Ach %":round(rp_lkr.get(r,{}).get('PCT_LKR',0),1),
-                   "Target Units":round(rp_u.get(r,{}).get('TAR',0)),
-                   "Achievement Units":round(rp_u.get(r,{}).get('ACH',0)),
-                   "Unit Ach %":round(rp_u.get(r,{}).get('PCT',0),1)}
+                   "Target LKR":safe_round(rp_lkr.get(r,{}).get('TAR_LKR',0)),
+                   "Achievement LKR":safe_round(rp_lkr.get(r,{}).get('ACH_LKR',0)),
+                   "LKR Ach %":safe_round(rp_lkr.get(r,{}).get('PCT_LKR',0),1),
+                   "Target Units":safe_round(rp_u.get(r,{}).get('TAR',0)),
+                   "Achievement Units":safe_round(rp_u.get(r,{}).get('ACH',0)),
+                   "Unit Ach %":safe_round(rp_u.get(r,{}).get('PCT',0),1)}
                   for r in disp]
         if rp_tbl:
             section("REP SUMMARY TABLE")
@@ -1106,6 +1114,191 @@ with tab5:
                 "Target (Units)":"{:,.0f}","Achievement (Units)":"{:,.0f}",
                 "Unit Ach %":"{:.1f}%","Variance (Units)":"{:+,.0f}"}),
                 use_container_width=True, hide_index=True)
+
+# ╔══════════════════════════════════════╗
+# ║  TAB 6 — CUMULATIVE                 ║
+# ╚══════════════════════════════════════╝
+with tab6:
+    section("📊 CUMULATIVE ACHIEVEMENT — ALL MONTHS")
+
+    # Build cumulative data
+    all_products_set = set()
+    for m in month_list:
+        for ent_data in all_prod_entity.get(m, {}).values():
+            all_products_set.update(ent_data.keys())
+    all_products_list = sorted(all_products_set)
+
+    # Collect all entities across months
+    seen_ents = []
+    seen_set  = set()
+    for m in month_list:
+        for e in all_eo.get(m, []):
+            if e not in seen_set:
+                seen_ents.append(e)
+                seen_set.add(e)
+
+    # Build running cumulative
+    cum_data   = {}
+    running_t  = {}
+    running_a  = {}
+    for m in month_list:
+        pe = all_prod_entity.get(m, {})
+        cum_data[m] = {}
+        for entity in seen_ents:
+            ep = pe.get(entity, {})
+            running_t.setdefault(entity, {})
+            running_a.setdefault(entity, {})
+            cum_data[m][entity] = {}
+            for prod in all_products_list:
+                mt = ep.get(prod, {}).get('TAR', 0.0)
+                ma = ep.get(prod, {}).get('ACH', 0.0)
+                running_t[entity][prod] = running_t[entity].get(prod, 0.0) + mt
+                running_a[entity][prod] = running_a[entity].get(prod, 0.0) + ma
+                ct = running_t[entity][prod]
+                ca = running_a[entity][prod]
+                cum_data[m][entity][prod] = dict(
+                    CUM_TAR=ct, CUM_ACH=ca,
+                    CUM_PCT=(ca/ct*100) if ct > 0 else 0.0,
+                    MONTH_TAR=mt, MONTH_ACH=ma,
+                )
+
+    # Controls
+    cc1, cc2, cc3 = st.columns(3)
+    with cc1:
+        cum_sel_month = st.selectbox("Cumulative up to Month", month_list,
+                                      index=len(month_list)-1, key="cum_month")
+    with cc2:
+        ent_opts_cum  = ["ALL (TOTAL)"] + [e for e in seen_ents if e != 'TOTAL']
+        cum_sel_ent   = st.selectbox("Entity", ent_opts_cum, key="cum_entity")
+    with cc3:
+        prod_opts_cum = ["ALL Products"] + all_products_list
+        cum_sel_prod  = st.selectbox("Product", prod_opts_cum, key="cum_prod")
+
+    months_upto    = month_list[:month_list.index(cum_sel_month)+1]
+    entity_for_kpi = 'TOTAL' if cum_sel_ent == "ALL (TOTAL)" else cum_sel_ent
+
+    # KPI totals
+    cum_tar_t = cum_ach_t = 0.0
+    for prod in all_products_list:
+        if cum_sel_prod != "ALL Products" and prod != cum_sel_prod: continue
+        d = cum_data.get(cum_sel_month, {}).get(entity_for_kpi, {}).get(prod, {})
+        cum_tar_t += d.get('CUM_TAR', 0.0)
+        cum_ach_t += d.get('CUM_ACH', 0.0)
+    cum_pct_t = (cum_ach_t / cum_tar_t * 100) if cum_tar_t > 0 else 0.0
+    cum_var_t = cum_ach_t - cum_tar_t
+
+    section(f"CUMULATIVE KPIs — APR → {cum_sel_month}")
+    ck1, ck2, ck3, ck4 = st.columns(4)
+    kpi_card(ck1, "Cumulative Target (Units)", fmt_n(cum_tar_t), "🎯", "c-blue",
+             sub=f"{len(months_upto)} months")
+    kpi_card(ck2, "Cumulative Achievement (Units)", fmt_n(cum_ach_t), "✅", "c-green",
+             badge_text=f"{'▲' if cum_var_t>=0 else '▼'} {fmt_n(abs(cum_var_t))}",
+             badge_cls=pct_cls(cum_pct_t))
+    kpi_card(ck3, "Cumulative Ach %", f"{cum_pct_t:.1f}%", "📈",
+             "c-green" if cum_pct_t>=100 else "c-amber" if cum_pct_t>=80 else "c-red",
+             badge_text="On Track" if cum_pct_t>=100 else "Below Target",
+             badge_cls=pct_cls(cum_pct_t))
+    kpi_card(ck4, "Months Accumulated", str(len(months_upto)), "📅", "c-indigo",
+             sub=" → ".join(months_upto))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Cumulative trend chart by product
+    chart_rows = []
+    prods_to_chart = all_products_list if cum_sel_prod == "ALL Products" else [cum_sel_prod]
+    for prod in prods_to_chart:
+        for m in months_upto:
+            d = cum_data.get(m, {}).get(entity_for_kpi, {}).get(prod, {})
+            ct = d.get('CUM_TAR', 0.0); ca = d.get('CUM_ACH', 0.0); cp = d.get('CUM_PCT', 0.0)
+            if ct > 0:
+                chart_rows.append(dict(Month=m, Product=prod, CUM_PCT=cp, CUM_TAR=ct, CUM_ACH=ca))
+
+    if chart_rows:
+        cc_df = pd.DataFrame(chart_rows)
+        col_line, col_bar = st.columns([3, 2])
+        with col_line:
+            st.markdown('<div class="card"><div class="card-title">Cumulative Ach % Trend by Product</div>', unsafe_allow_html=True)
+            fig_cl = px.line(cc_df, x="Month", y="CUM_PCT", color="Product", markers=True,
+                             color_discrete_sequence=PALETTE,
+                             labels={"CUM_PCT":"Cumulative Ach %"})
+            fig_cl.add_hline(y=100, line_color="#22c55e", line_dash="dot", line_width=2)
+            fig_cl.update_layout(**PLOTLY_BASE, height=340,
+                margin=dict(t=10,b=40,l=70,r=20),
+                xaxis=dict(tickfont=dict(size=11,color="#64748b"),showgrid=False),
+                yaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=10,color="#94a3b8"),
+                           title="Cumulative Ach %", ticksuffix="%"),
+                legend=dict(bgcolor="rgba(0,0,0,0)",orientation="h",y=1.05,xanchor="right",x=1,font=dict(size=10)))
+            st.plotly_chart(fig_cl, use_container_width=True, config={"displayModeBar":False})
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with col_bar:
+            last_m_df = cc_df[cc_df["Month"]==cum_sel_month].sort_values("CUM_PCT", ascending=True)
+            if not last_m_df.empty:
+                st.markdown(f'<div class="card"><div class="card-title">Product Ach % as of {cum_sel_month}</div>', unsafe_allow_html=True)
+                fig_cb = go.Figure(go.Bar(
+                    y=last_m_df["Product"], x=last_m_df["CUM_PCT"], orientation="h",
+                    marker=dict(color=[pct_color(p) for p in last_m_df["CUM_PCT"]], opacity=.85, line=dict(width=0)),
+                    text=[f"{p:.1f}%" for p in last_m_df["CUM_PCT"]], textposition="outside"))
+                fig_cb.add_vline(x=100, line_color="#22c55e", line_dash="dot", line_width=1.5)
+                fig_cb.update_layout(**PLOTLY_BASE, height=340,
+                    margin=dict(t=10,b=40,l=160,r=70),
+                    xaxis=dict(gridcolor="#f1f5f9",tickfont=dict(size=10,color="#94a3b8"),ticksuffix="%"),
+                    yaxis=dict(tickfont=dict(size=10,color="#64748b")))
+                st.plotly_chart(fig_cb, use_container_width=True, config={"displayModeBar":False})
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    # Entity comparison
+    section(f"ENTITY COMPARISON — Cumulative as of {cum_sel_month}")
+    comp_prod = st.selectbox("Product for Comparison", ["ALL Products"]+all_products_list, key="cum_comp")
+    comp_rows = []
+    for entity in seen_ents:
+        if entity == 'TOTAL': continue
+        prds = all_products_list if comp_prod == "ALL Products" else [comp_prod]
+        c_t = sum(cum_data.get(cum_sel_month,{}).get(entity,{}).get(p,{}).get('CUM_TAR',0.0) for p in prds)
+        c_a = sum(cum_data.get(cum_sel_month,{}).get(entity,{}).get(p,{}).get('CUM_ACH',0.0) for p in prds)
+        c_p = (c_a/c_t*100) if c_t > 0 else 0.0
+        if c_t > 0:
+            et = "SBDM" if is_sbdm(entity) else "DM" if is_dm(entity) else "RP/Rep"
+            comp_rows.append(dict(Entity=entity, Type=et,
+                                   CUM_TAR=c_t, CUM_ACH=c_a, CUM_PCT=c_p, CUM_VAR=c_a-c_t))
+
+    if comp_rows:
+        comp_df = pd.DataFrame(comp_rows).sort_values("CUM_PCT", ascending=False)
+
+        # Achievement bar visual
+        for _, row in comp_df.iterrows():
+            p = row['CUM_PCT']; c = pct_color(p); pb = pct_badge(p)
+            bg = "#f0fdf4" if p>=100 else "#fffbeb" if p>=80 else "#fff"
+            vc = "#059669" if row['CUM_VAR']>=0 else "#dc2626"
+            et_icon = "⭐" if row['Type']=="SBDM" else "👤" if row['Type']=="DM" else "•"
+            st.markdown(f"""<div style="display:flex;align-items:center;gap:12px;
+                padding:10px 16px;border-radius:12px;margin-bottom:6px;
+                border:1px solid #e2e8f0;background:{bg}">
+                <div style="width:20px;font-size:.9rem">{et_icon}</div>
+                <div style="flex:1;font-size:.84rem;font-weight:600;color:#1e293b;
+                    overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{row['Entity']}</div>
+                <div style="flex:2;background:#f1f5f9;border-radius:999px;height:9px;overflow:hidden">
+                    <div style="width:{min(p,100):.1f}%;height:100%;background:{c};border-radius:999px;opacity:.85"></div>
+                </div>
+                <div style="width:100px;text-align:right;font-size:.78rem;color:#94a3b8">{fmt_n(row['CUM_TAR'])}</div>
+                <div style="width:100px;text-align:right;font-size:.78rem;font-weight:700;color:{c}">{fmt_n(row['CUM_ACH'])}</div>
+                <div style="width:90px;text-align:right;font-size:.75rem;font-weight:700;color:{vc}">
+                    {"+" if row['CUM_VAR']>=0 else ""}{fmt_n(row['CUM_VAR'])}</div>
+                <div style="width:58px;text-align:center">
+                    <span class="{pb}" style="font-size:.72rem;font-weight:800;padding:3px 9px;border-radius:999px;
+                    {'background:#dcfce7;color:#15803d' if p>=100 else 'background:#fef3c7;color:#92400e' if p>=80 else 'background:#fee2e2;color:#b91c1c'}">{p:.1f}%</span>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+        # Download
+        comp_disp = comp_df.rename(columns={"CUM_TAR":"Cum Target","CUM_ACH":"Cum Achievement",
+                                              "CUM_PCT":"Cum Ach %","CUM_VAR":"Cum Variance"})
+        dl7, _ = st.columns([1,5])
+        with dl7:
+            st.download_button("⬇️ Export Cumulative CSV",
+                data=comp_disp.to_csv(index=False).encode(),
+                file_name=f"{dash_title}_cumulative_{cum_sel_month}.csv",
+                mime="text/csv", use_container_width=True)
 
 # ══════════════════════════════════════════════════════
 st.markdown(f'<div style="text-align:center;font-size:.72rem;color:#94a3b8;margin-top:2.5rem;'
