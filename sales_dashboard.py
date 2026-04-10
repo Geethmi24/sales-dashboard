@@ -1,6 +1,7 @@
 """
-Universal Sales Intelligence Hub — v13.0
+Universal Sales Intelligence Hub — v13.1
 Hierarchy-aware: TOTAL → SBDM → DM → RP (SBDM optional)
+FIXES: dynamic DM/SBDM/RP filter, None-name guard, filtered TOTAL banner suppressed
 """
 
 import streamlit as st
@@ -198,16 +199,13 @@ def pct_badge(p): return "green" if p >= 100 else "amber" if p >= 80 else "red"
 
 # ── Hierarchy detection ──────────────────────────────
 def is_sbdm(name):
-    """Senior BDM — contains SBDM (case-insensitive)"""
     return "SBDM" in str(name).upper()
 
 def is_dm(name):
-    """District Manager — contains (DM) but NOT SBDM"""
     n = str(name).upper()
     return "(DM)" in n and "SBDM" not in n
 
 def is_rp(name):
-    """Regular sales rep — neither TOTAL, SBDM, nor DM"""
     n = str(name).upper()
     return name != "TOTAL" and not is_sbdm(name) and not is_dm(name)
 
@@ -237,36 +235,10 @@ def kpi_card(col, label, value, icon, color, badge_text=None, badge_cls="neu", s
     </div>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
-# HIERARCHY BUILDER  ← v13 core change
+# HIERARCHY BUILDER
 # ══════════════════════════════════════════════════════
 def build_hierarchy(ordered_entities):
-    """
-    Build a hierarchy dict from the ordered entity list.
-
-    Rules:
-      TOTAL → SBDM → DM → RP
-      If no SBDM exists → TOTAL → DM → RP
-      If no DM above an RP, attach to last seen DM (or SBDM if no DM yet)
-
-    Returns:
-      {
-        'has_sbdm': bool,
-        'sbdm_nodes': [
-            {
-              'name': 'BUDDHIKA (SBDM)',
-              'dms': [
-                  {'name': 'NILANJANA (DM)', 'rps': ['RAVI','DASUN',...]},
-                  ...
-              ]
-            }
-        ],
-        # when no SBDM, sbdm_nodes will have ONE fake node with name=None
-        'all_dms': ['NILANJANA (DM)', ...],   # flat list for quick lookup
-        'entity_roles': {'NILANJANA (DM)': 'DM', 'RAVI': 'RP', ...}
-      }
-    """
     non_total = [e for e in ordered_entities if e != "TOTAL"]
-
     has_sbdm = any(is_sbdm(e) for e in non_total)
     entity_roles = {e: get_role(e) for e in ordered_entities}
 
@@ -283,7 +255,6 @@ def build_hierarchy(ordered_entities):
                 cur_dm = None
             elif role == "DM":
                 if cur_sbdm is None:
-                    # DM before any SBDM — create implicit node
                     cur_sbdm = {"name": None, "dms": []}
                     sbdm_nodes.append(cur_sbdm)
                 cur_dm = {"name": e, "rps": []}
@@ -292,11 +263,9 @@ def build_hierarchy(ordered_entities):
                 if cur_dm is not None:
                     cur_dm["rps"].append(e)
                 elif cur_sbdm is not None:
-                    # RP directly under SBDM (no DM yet) — attach to last DM or make orphan
                     if cur_sbdm["dms"]:
                         cur_sbdm["dms"][-1]["rps"].append(e)
     else:
-        # No SBDM — single fake top-level node
         fake = {"name": None, "dms": []}
         sbdm_nodes.append(fake)
         for e in non_total:
@@ -323,7 +292,7 @@ def build_hierarchy(ordered_entities):
     }
 
 # ══════════════════════════════════════════════════════
-# EXCEL PARSING — v13
+# EXCEL PARSING
 # ══════════════════════════════════════════════════════
 def find_total_row(raw):
     for i in range(2, min(80, raw.shape[0])):
@@ -356,7 +325,7 @@ def parse_excel(file_obj):
 
     all_lkr           = {}
     all_units         = {}
-    all_hierarchy     = {}   # ← replaces all_dm_rp
+    all_hierarchy     = {}
     all_eo            = {}
     all_prod          = {}
     all_prod_entity   = {}
@@ -373,7 +342,6 @@ def parse_excel(file_obj):
         prod_rows = find_product_rows(raw, lkr_row_idx)
         if not prod_rows: continue
 
-        # ── Parse entity columns ─────────────────────────────────
         entity_cols = {}
         name_count  = {}
         for j in range(4, raw.shape[1] - 1, 2):
@@ -393,10 +361,9 @@ def parse_excel(file_obj):
         if not entity_cols: continue
 
         ordered_entities = list(entity_cols.keys())
-        all_eo[sheet]       = ordered_entities
-        all_hierarchy[sheet] = build_hierarchy(ordered_entities)   # ← v13
+        all_eo[sheet]        = ordered_entities
+        all_hierarchy[sheet] = build_hierarchy(ordered_entities)
 
-        # ── Unit data ────────────────────────────────────────────
         units_ms          = {}
         prod_entity_sheet = {}
 
@@ -418,7 +385,6 @@ def parse_excel(file_obj):
         all_units[sheet]       = units_ms
         all_prod_entity[sheet] = prod_entity_sheet
 
-        # ── LKR row ──────────────────────────────────────────────
         lkr_ms = {}
         for ename, tc in entity_cols.items():
             ac = tc + 1
@@ -432,7 +398,6 @@ def parse_excel(file_obj):
                                   PCT_LKR=(ach_lkr/tar_lkr*100) if tar_lkr else 0.0)
         all_lkr[sheet] = lkr_ms
 
-        # ── Product DataFrame ────────────────────────────────────
         prod_rows_list = []
         for r in prod_rows:
             pname = str(raw.iloc[r, 1]).strip()
@@ -525,7 +490,6 @@ def achievement_rows_ui(rows, fmt_fn=fmt_n):
 
 
 def _rp_rows_html(rp_list, data_ms, fmt_fn, color_accent):
-    """Render individual RP rows inside a DM block."""
     if not rp_list:
         return '<div style="padding:10px 12px;font-size:.8rem;color:#94a3b8;font-style:italic">No sales reps under this DM.</div>'
     html = ""
@@ -552,55 +516,90 @@ def _rp_rows_html(rp_list, data_ms, fmt_fn, color_accent):
     return html
 
 
-def render_full_hierarchy(hier, data_ms, fmt_fn=fmt_n, label="units"):
-    """
-    Render the full TOTAL → SBDM → DM → RP tree.
-    hier = result from build_hierarchy()
-    data_ms = units_ms or lkr_ms for the selected month
-    """
-    has_sbdm = hier["has_sbdm"]
+# ══════════════════════════════════════════════════════
+# FIX 1: remove_zero_nodes — guard None name
+# ══════════════════════════════════════════════════════
+def remove_zero_nodes(hier, data):
+    """Remove nodes where ACH == 0 at every level. Safe for None-named SBDM nodes."""
+    import copy
+    hier = copy.deepcopy(hier)
+    new_nodes = []
+
+    for sn in hier["sbdm_nodes"]:
+        new_dms = []
+
+        for dm in sn["dms"]:
+            # Filter RPs with zero ACH
+            new_rps = [
+                rp for rp in dm["rps"]
+                if data.get(rp, {}).get("ACH", data.get(rp, {}).get("ACH_LKR", 0)) != 0
+            ]
+
+            dm_ach = 0
+            if dm["name"]:
+                dm_ach = data.get(dm["name"], {}).get("ACH", data.get(dm["name"], {}).get("ACH_LKR", 0))
+
+            if dm_ach != 0 or new_rps:
+                new_dms.append({"name": dm["name"], "rps": new_rps})
+
+        # Guard: sn["name"] may be None (no-SBDM case)
+        sbdm_ach = 0
+        if sn["name"]:
+            sbdm_ach = data.get(sn["name"], {}).get("ACH", data.get(sn["name"], {}).get("ACH_LKR", 0))
+
+        if sbdm_ach != 0 or new_dms:
+            new_nodes.append({"name": sn["name"], "dms": new_dms})
+
+    hier["sbdm_nodes"] = new_nodes
+    return hier
+
+
+# ══════════════════════════════════════════════════════
+# FIX 2: render_full_hierarchy — optional TOTAL banner
+# ══════════════════════════════════════════════════════
+def render_full_hierarchy(hier, data_ms, fmt_fn=fmt_n, label="units", show_total_banner=True):
+    has_sbdm   = hier["has_sbdm"]
     sbdm_nodes = hier["sbdm_nodes"]
 
-    # ── TOTAL banner ─────────────────────────────────
-    tot = data_ms.get("TOTAL", {})
-    tt = tot.get("TAR", tot.get("TAR_LKR", 0))
-    ta = tot.get("ACH", tot.get("ACH_LKR", 0))
-    tv = tot.get("VAR", tot.get("VAR_LKR", 0))
-    tp = tot.get("PCT", tot.get("PCT_LKR", 0))
-    tc_col = pct_color(tp)
-    st.markdown(f"""
-    <div class="hier-total-block">
-        <div class="hier-total-title">Division Total</div>
-        <div class="hier-total-name">🏢 TOTAL</div>
-        <div class="hier-total-kpis">
-            <div><div class="hier-kpi-lbl">Target ({label})</div>
-                 <div class="hier-kpi-val">{fmt_fn(tt)}</div></div>
-            <div><div class="hier-kpi-lbl">Achievement ({label})</div>
-                 <div class="hier-kpi-val" style="color:{tc_col}">{fmt_fn(ta)}</div></div>
-            <div><div class="hier-kpi-lbl">Variance</div>
-                 <div class="hier-kpi-val" style="color:{tc_col}">
-                     {"+" if tv>=0 else ""}{fmt_fn(tv)}</div></div>
-            <div><div class="hier-kpi-lbl">Ach %</div>
-                 <div class="hier-kpi-val">
-                     <span style="background:{'#dcfce7' if tp>=100 else '#fef3c7' if tp>=80 else '#fee2e2'};
-                                  color:{'#15803d' if tp>=100 else '#92400e' if tp>=80 else '#b91c1c'};
-                                  padding:3px 12px;border-radius:999px;font-size:.9rem">{tp:.1f}%</span>
-                 </div></div>
-        </div>
-    </div>""", unsafe_allow_html=True)
+    if show_total_banner:
+        tot = data_ms.get("TOTAL", {})
+        tt = tot.get("TAR", tot.get("TAR_LKR", 0))
+        ta = tot.get("ACH", tot.get("ACH_LKR", 0))
+        tv = tot.get("VAR", tot.get("VAR_LKR", 0))
+        tp = tot.get("PCT", tot.get("PCT_LKR", 0))
+        tc_col = pct_color(tp)
+        st.markdown(f"""
+        <div class="hier-total-block">
+            <div class="hier-total-title">Division Total</div>
+            <div class="hier-total-name">🏢 TOTAL</div>
+            <div class="hier-total-kpis">
+                <div><div class="hier-kpi-lbl">Target ({label})</div>
+                     <div class="hier-kpi-val">{fmt_fn(tt)}</div></div>
+                <div><div class="hier-kpi-lbl">Achievement ({label})</div>
+                     <div class="hier-kpi-val" style="color:{tc_col}">{fmt_fn(ta)}</div></div>
+                <div><div class="hier-kpi-lbl">Variance</div>
+                     <div class="hier-kpi-val" style="color:{tc_col}">
+                         {"+" if tv>=0 else ""}{fmt_fn(tv)}</div></div>
+                <div><div class="hier-kpi-lbl">Ach %</div>
+                     <div class="hier-kpi-val">
+                         <span style="background:{'#dcfce7' if tp>=100 else '#fef3c7' if tp>=80 else '#fee2e2'};
+                                      color:{'#15803d' if tp>=100 else '#92400e' if tp>=80 else '#b91c1c'};
+                                      padding:3px 12px;border-radius:999px;font-size:.9rem">{tp:.1f}%</span>
+                     </div></div>
+            </div>
+        </div>""", unsafe_allow_html=True)
 
     for sbdm_node in sbdm_nodes:
         sbdm_name = sbdm_node["name"]
         dms       = sbdm_node["dms"]
 
         if has_sbdm and sbdm_name:
-            # ── SBDM block ───────────────────────────────────────
             sd  = data_ms.get(sbdm_name, {})
             st_ = sd.get("TAR", sd.get("TAR_LKR", 0))
             sa  = sd.get("ACH", sd.get("ACH_LKR", 0))
             sv  = sd.get("VAR", sd.get("VAR_LKR", 0))
             sp  = sd.get("PCT", sd.get("PCT_LKR", 0))
-            sc  = pct_color(sp); sb = pct_badge(sp)
+            sc  = pct_color(sp)
             vc  = "#4ade80" if sv >= 0 else "#f87171"
             st.markdown(f"""
             <div class="sbdm-block">
@@ -630,7 +629,6 @@ def render_full_hierarchy(hier, data_ms, fmt_fn=fmt_n, label="units"):
             st.markdown('</div></div>', unsafe_allow_html=True)
 
         else:
-            # ── No SBDM — render DMs directly ───────────────────
             for dm_node in dms:
                 _render_dm_node(dm_node, data_ms, fmt_fn, label, standalone=True)
 
@@ -644,7 +642,7 @@ def _render_dm_node(dm_node, data_ms, fmt_fn, label, standalone=False):
     da  = dd.get("ACH", dd.get("ACH_LKR", 0))
     dv  = dd.get("VAR", dd.get("VAR_LKR", 0))
     dp  = dd.get("PCT", dd.get("PCT_LKR", 0))
-    dc  = pct_color(dp); db = pct_badge(dp)
+    dc  = pct_color(dp)
     vc  = "#4ade80" if dv >= 0 else "#f87171"
 
     rp_tar_sum = sum(data_ms.get(r,{}).get("TAR", data_ms.get(r,{}).get("TAR_LKR",0)) for r in rp_list)
@@ -674,7 +672,6 @@ def _render_dm_node(dm_node, data_ms, fmt_fn, label, standalone=False):
       </div>
       <div class="dm-body">"""
 
-    # RP column headers
     html += """
         <div style="display:flex;align-items:center;gap:10px;padding:4px 12px;
                     font-size:.62rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px;">
@@ -688,7 +685,6 @@ def _render_dm_node(dm_node, data_ms, fmt_fn, label, standalone=False):
 
     html += _rp_rows_html(rp_list, data_ms, fmt_fn, dc)
 
-    # Rollup footer
     match = "✓ DM = Σ RP" if abs(dt - rp_tar_sum) < 10 else f"⚠ DM {fmt_fn(dt)} ≠ Σ RP {fmt_fn(rp_tar_sum)}"
     html += f"""
       </div>
@@ -775,7 +771,6 @@ with st.sidebar:
         total_pct_u = total_units.get('PCT', 0)
 
         p_col  = "#4ade80" if total_pct_lkr>=100 else "#fbbf24" if total_pct_lkr>=80 else "#f87171"
-        pu_col = "#4ade80" if total_pct_u>=100   else "#fbbf24" if total_pct_u>=80   else "#f87171"
 
         st.markdown("---")
         st.markdown('<span style="font-weight:bold">📌 Quick Stats</span>', unsafe_allow_html=True)
@@ -791,20 +786,37 @@ with st.sidebar:
         """, unsafe_allow_html=True)
 
         st.markdown("---")
-        # Filter: SBDM or DM
+
+        # ══════════════════════════════════════════════
+        # FIX 3: Dynamic filter — reads from ALL months
+        # so every SBDM/DM that ever appears is listed
+        # ══════════════════════════════════════════════
+        all_sbdm_ever = []
+        all_dm_ever   = []
+        seen_s = set(); seen_d = set()
+        for m in month_list:
+            for e in all_eo.get(m, []):
+                if is_sbdm(e) and e not in seen_s:
+                    all_sbdm_ever.append(e); seen_s.add(e)
+                elif is_dm(e) and e not in seen_d:
+                    all_dm_ever.append(e); seen_d.add(e)
+
         filter_opts = ["ALL"]
-        if has_sbdm: filter_opts += [f"SBDM: {s}" for s in all_sbdms]
-        filter_opts += [f"DM: {d}" for d in all_dms]
-        hier_filter = st.selectbox("🔍 Filter", filter_opts)
+        if all_sbdm_ever:
+            filter_opts += [f"SBDM: {s}" for s in all_sbdm_ever]
+        filter_opts += [f"DM: {d}" for d in all_dm_ever]
+
+        hier_filter = st.selectbox("🔍 Filter by SBDM / DM", filter_opts)
 
         cum_data, all_products, all_entities = build_cumulative_data(
             month_list, all_prod_entity, all_eo)
     else:
         st.info("Upload an Excel file to begin.")
-        dash_title = "Sales Intelligence Hub"
+        dash_title  = "Sales Intelligence Hub"
+        hier_filter = "ALL"
 
     st.markdown("---")
-    st.markdown("<small style='color:#334155;font-size:.68rem'>Universal Sales Hub · v13.0</small>",
+    st.markdown("<small style='color:#334155;font-size:.68rem'>Universal Sales Hub · v13.1</small>",
                 unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════
@@ -865,44 +877,9 @@ tab_hier, tab2, tab1, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📊 Cumulative",
 ])
 
-# ───────────── ADD THIS ABOVE TAB_HIER ─────────────
-import copy
-
-def remove_zero_nodes(hier, data):
-    new_nodes = []
-
-    for sn in hier["sbdm_nodes"]:
-        new_dms = []
-
-        for dm in sn["dms"]:
-            new_rps = []
-
-            for rp in dm["rps"]:
-                if data.get(rp, {}).get("ACH", 0) != 0:
-                    new_rps.append(rp)
-
-            dm_val = data.get(dm["name"], {}).get("ACH", 0)
-
-            if dm_val != 0 or new_rps:
-                new_dms.append({
-                    "name": dm["name"],
-                    "rps": new_rps
-                })
-
-        sbdm_val = data.get(sn["name"], {}).get("ACH", 0)
-
-        if sbdm_val != 0 or new_dms:
-            new_nodes.append({
-                "name": sn["name"],
-                "dms": new_dms
-            })
-
-    hier["sbdm_nodes"] = new_nodes
-    return hier
-
-# ╔══════════════════════════════════════════╗
-# ║  TAB — HIERARCHY (NEW — main feature)   ║
-# ╚══════════════════════════════════════════╝
+# ╔══════════════════════════════════════════════╗
+# ║  TAB — HIERARCHY  (v13.1 — all fixes here)  ║
+# ╚══════════════════════════════════════════════╝
 with tab_hier:
     hier_month = st.selectbox("Select Month", month_list,
                                index=month_list.index(sel_month), key="hier_month")
@@ -915,41 +892,110 @@ with tab_hier:
     fmt_fn_h   = fmt_n if view_mode == "Units" else fmt_lkr
     label_h    = "units" if view_mode == "Units" else "LKR"
 
-    section(f"FULL HIERARCHY — {hier_month} ({view_mode})")
+    f = hier_filter  # from sidebar — dynamic across all months
 
-    # Apply filter
-    f = hier_filter
+    section(f"FULL HIERARCHY — {hier_month} ({view_mode})"
+            + (f"  |  Filter: {f}" if f != "ALL" else ""))
 
     if f == "ALL":
-        clean_hier = remove_zero_nodes(copy.deepcopy(h_hier), data_ms_h)
-        render_full_hierarchy(clean_hier, data_ms_h, fmt_fn_h, label_h)
+        # Show all, strip zero-ACH nodes
+        clean = remove_zero_nodes(h_hier, data_ms_h)
+        render_full_hierarchy(clean, data_ms_h, fmt_fn_h, label_h, show_total_banner=True)
 
-    else:
-        # Filter to just the selected SBDM or DM subtree
-        filtered_nodes = []
-
-        for sn in h_hier["sbdm_nodes"]:
-            if f.startswith("SBDM: ") and sn["name"] == f[6:]:
-                filtered_nodes.append(sn)
-
-            elif f.startswith("DM: "):
-                dm_target = f[4:]
-                for dm_node in sn["dms"]:
-                    if dm_node["name"] == dm_target:
-                        filtered_nodes.append({
-                            "name": sn["name"] if h_hier["has_sbdm"] else None,
-                            "dms": [dm_node]
-                        })
-
-        # Build a mini hierarchy for the filtered view
-        mini_hier = dict(h_hier)
-        mini_hier["sbdm_nodes"] = filtered_nodes
-
+    elif f.startswith("SBDM: "):
+        # ── FIX 4: SBDM filter — show SBDM + its DMs + their RPs only ──
+        target_sbdm = f[6:]
+        filtered_nodes = [
+            sn for sn in h_hier["sbdm_nodes"]
+            if sn["name"] == target_sbdm
+        ]
         if filtered_nodes:
-            clean_hier = remove_zero_nodes(copy.deepcopy(mini_hier), data_ms_h)
-            render_full_hierarchy(clean_hier, data_ms_h, fmt_fn_h, label_h)
+            mini = dict(h_hier, sbdm_nodes=filtered_nodes)
+            clean = remove_zero_nodes(mini, data_ms_h)
+            # Show SBDM-level summary banner instead of TOTAL
+            sd = data_ms_h.get(target_sbdm, {})
+            st_ = sd.get("TAR", sd.get("TAR_LKR", 0))
+            sa  = sd.get("ACH", sd.get("ACH_LKR", 0))
+            sv  = sd.get("VAR", sd.get("VAR_LKR", 0))
+            sp  = sd.get("PCT", sd.get("PCT_LKR", 0))
+            sc  = pct_color(sp)
+            vc  = "#4ade80" if sv >= 0 else "#f87171"
+            st.markdown(f"""
+            <div class="hier-total-block" style="background:linear-gradient(135deg,#4c1d95,#6d28d9);border-color:#7c3aed;">
+                <div class="hier-total-title">SBDM Summary</div>
+                <div class="hier-total-name">👤 {target_sbdm}</div>
+                <div class="hier-total-kpis">
+                    <div><div class="hier-kpi-lbl">Target ({label_h})</div>
+                         <div class="hier-kpi-val">{fmt_fn_h(st_)}</div></div>
+                    <div><div class="hier-kpi-lbl">Achievement</div>
+                         <div class="hier-kpi-val" style="color:{sc}">{fmt_fn_h(sa)}</div></div>
+                    <div><div class="hier-kpi-lbl">Variance</div>
+                         <div class="hier-kpi-val" style="color:{vc}">{"+" if sv>=0 else ""}{fmt_fn_h(sv)}</div></div>
+                    <div><div class="hier-kpi-lbl">Ach %</div>
+                         <div class="hier-kpi-val">
+                             <span style="background:{'#dcfce7' if sp>=100 else '#fef3c7' if sp>=80 else '#fee2e2'};
+                                          color:{'#15803d' if sp>=100 else '#92400e' if sp>=80 else '#b91c1c'};
+                                          padding:3px 12px;border-radius:999px;font-size:.9rem">{sp:.1f}%</span>
+                         </div></div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+            # Render DMs under this SBDM (no TOTAL banner, no SBDM wrapper again)
+            for dm_node in clean["sbdm_nodes"][0]["dms"] if clean["sbdm_nodes"] else []:
+                _render_dm_node(dm_node, data_ms_h, fmt_fn_h, label_h, standalone=False)
         else:
-            st.info("No data for selected filter.")
+            st.info(f"No data found for {target_sbdm} in {hier_month}.")
+
+    elif f.startswith("DM: "):
+        # ── FIX 5: DM filter — show only that DM block + its RPs ──
+        target_dm = f[4:]
+        dm_node_found = None
+        parent_sbdm   = None
+        for sn in h_hier["sbdm_nodes"]:
+            for dm_node in sn["dms"]:
+                if dm_node["name"] == target_dm:
+                    dm_node_found = dm_node
+                    parent_sbdm  = sn["name"]
+                    break
+            if dm_node_found: break
+
+        if dm_node_found:
+            # Summary banner for this DM
+            dd = data_ms_h.get(target_dm, {})
+            dt = dd.get("TAR", dd.get("TAR_LKR", 0))
+            da = dd.get("ACH", dd.get("ACH_LKR", 0))
+            dv = dd.get("VAR", dd.get("VAR_LKR", 0))
+            dp = dd.get("PCT", dd.get("PCT_LKR", 0))
+            dc = pct_color(dp)
+            vc = "#4ade80" if dv >= 0 else "#f87171"
+            parent_info = f"Under SBDM: {parent_sbdm}" if parent_sbdm else "Standalone DM"
+            st.markdown(f"""
+            <div class="hier-total-block" style="background:linear-gradient(135deg,#1e3a5f,#1d4ed8);border-color:#3b82f6;">
+                <div class="hier-total-title">{parent_info}</div>
+                <div class="hier-total-name">👤 {target_dm}</div>
+                <div class="hier-total-kpis">
+                    <div><div class="hier-kpi-lbl">Target ({label_h})</div>
+                         <div class="hier-kpi-val">{fmt_fn_h(dt)}</div></div>
+                    <div><div class="hier-kpi-lbl">Achievement</div>
+                         <div class="hier-kpi-val" style="color:{dc}">{fmt_fn_h(da)}</div></div>
+                    <div><div class="hier-kpi-lbl">Variance</div>
+                         <div class="hier-kpi-val" style="color:{vc}">{"+" if dv>=0 else ""}{fmt_fn_h(dv)}</div></div>
+                    <div><div class="hier-kpi-lbl">Ach %</div>
+                         <div class="hier-kpi-val">
+                             <span style="background:{'#dcfce7' if dp>=100 else '#fef3c7' if dp>=80 else '#fee2e2'};
+                                          color:{'#15803d' if dp>=100 else '#92400e' if dp>=80 else '#b91c1c'};
+                                          padding:3px 12px;border-radius:999px;font-size:.9rem">{dp:.1f}%</span>
+                         </div></div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+            # Strip zero-ACH RPs
+            clean_rps = [
+                rp for rp in dm_node_found["rps"]
+                if data_ms_h.get(rp, {}).get("ACH", data_ms_h.get(rp, {}).get("ACH_LKR", 0)) != 0
+            ]
+            clean_dm_node = {"name": target_dm, "rps": clean_rps}
+            _render_dm_node(clean_dm_node, data_ms_h, fmt_fn_h, label_h, standalone=True)
+        else:
+            st.info(f"No data found for {target_dm} in {hier_month}.")
 
 # ╔══════════════════════════════╗
 # ║  TAB — OVERVIEW             ║
@@ -1009,11 +1055,7 @@ with tab1:
             tars  = [ov_lkr_ms[e]['TAR_LKR'] for e in top_ents]
             achs  = [ov_lkr_ms[e]['ACH_LKR'] for e in top_ents]
             pcts  = [ov_lkr_ms[e]['PCT_LKR'] for e in top_ents]
-            roles = [get_role(e) for e in top_ents]
             short = [n[:13]+"…" if len(n)>13 else n for n in top_ents]
-            # Color by role
-            role_colors = {"SBDM":"#8b5cf6","DM":"#3b82f6","RP":"#94a3b8"}
-            bar_colors = [role_colors.get(r,"#94a3b8") for r in roles]
             fig_b = go.Figure()
             fig_b.add_trace(go.Bar(name="Target", x=top_ents, y=tars,
                 marker=dict(color="#93c5fd",line=dict(width=0)), width=0.35, offset=-0.2))
@@ -1043,7 +1085,6 @@ with tab1:
     section("ACHIEVEMENT % RANKING (LKR)")
     col_rank, col_sc = st.columns([3, 2])
     with col_rank:
-        # Show by role group
         for role_name, role_fn, role_icon in [
             ("SBDM", is_sbdm, "🟣"), ("DM", is_dm, "🔵"), ("RP", is_rp, "⚫")
         ]:
@@ -1214,15 +1255,18 @@ with tab3:
             bc=pct_color(dm_p); bbg="#d1fae5" if dm_p>=100 else "#fef3c7" if dm_p>=80 else "#fee2e2"
             bfg="#065f46" if dm_p>=100 else "#92400e" if dm_p>=80 else "#991b1b"
             mw=max(dm_t,dm_a,1)
+            # Find parent SBDM
+            parent_sbdm_label = ""
+            for sn in dm_hier["sbdm_nodes"]:
+                if sn["name"] and any(d["name"]==dm_name for d in sn["dms"]):
+                    parent_sbdm_label = f"Under: {sn['name']}"
+                    break
             dm_cols[i].markdown(f"""
             <div style="background:#fff;border:1px solid #e8edf5;border-radius:14px;
                         padding:1.1rem 1.2rem;box-shadow:0 2px 8px rgba(0,0,0,0.05);
                         border-top:3px solid {bc}">
               <div style="font-size:.62rem;font-weight:700;color:#8b5cf6;text-transform:uppercase;
-                          letter-spacing:.1em;margin-bottom:2px">
-                {"SBDM: "+[sn["name"] for sn in dm_hier["sbdm_nodes"] for d in sn["dms"] if d["name"]==dm_name and sn["name"]][0]
-                 if any(sn["name"] and d["name"]==dm_name for sn in dm_hier["sbdm_nodes"] for d in sn["dms"]) else ""}
-              </div>
+                          letter-spacing:.1em;margin-bottom:2px">{parent_sbdm_label}</div>
               <div style="font-size:.72rem;font-weight:700;color:#64748b;overflow:hidden;
                           text-overflow:ellipsis;white-space:nowrap;margin-bottom:6px" title="{dm_name}">
                 👤 {dm_name}</div>
@@ -1250,7 +1294,6 @@ with tab3:
          for e in dm_keys if dm_lkr_ms.get(e,{}).get('TAR_LKR',0)>0],
         fmt_fn=fmt_lkr)
 
-    # DM trend chart
     dm_trend = []
     for m in month_list:
         for e in all_eo[m]:
@@ -1280,7 +1323,6 @@ with tab4:
     rp_hier     = all_hierarchy[rp_sel_month]
     rp_eo       = all_eo[rp_sel_month]
 
-    # Build RP→DM map from hierarchy
     rp_to_dm = {}
     for sn in rp_hier["sbdm_nodes"]:
         for dm_node in sn["dms"]:
@@ -1586,5 +1628,5 @@ with tab7:
 # FOOTER
 # ══════════════════════════════════════════════════════
 st.markdown(
-    f'<div class="dash-footer">Universal Sales Intelligence Hub · {dash_title} · {sel_month} · v13.0</div>',
+    f'<div class="dash-footer">Universal Sales Intelligence Hub · {dash_title} · {sel_month} · v13.1</div>',
     unsafe_allow_html=True)
