@@ -865,6 +865,41 @@ tab_hier, tab2, tab1, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "📊 Cumulative",
 ])
 
+# ───────────── ADD THIS ABOVE TAB_HIER ─────────────
+import copy
+
+def remove_zero_nodes(hier, data):
+    new_nodes = []
+
+    for sn in hier["sbdm_nodes"]:
+        new_dms = []
+
+        for dm in sn["dms"]:
+            new_rps = []
+
+            for rp in dm["rps"]:
+                if data.get(rp, {}).get("ACH", 0) != 0:
+                    new_rps.append(rp)
+
+            dm_val = data.get(dm["name"], {}).get("ACH", 0)
+
+            if dm_val != 0 or new_rps:
+                new_dms.append({
+                    "name": dm["name"],
+                    "rps": new_rps
+                })
+
+        sbdm_val = data.get(sn["name"], {}).get("ACH", 0)
+
+        if sbdm_val != 0 or new_dms:
+            new_nodes.append({
+                "name": sn["name"],
+                "dms": new_dms
+            })
+
+    hier["sbdm_nodes"] = new_nodes
+    return hier
+
 # ╔══════════════════════════════════════════╗
 # ║  TAB — HIERARCHY (NEW — main feature)   ║
 # ╚══════════════════════════════════════════╝
