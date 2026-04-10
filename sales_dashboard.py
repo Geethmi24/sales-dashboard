@@ -1638,12 +1638,7 @@ with tab7:
     section("📊 PRODUCT PERFORMANCE — MONTHLY vs CUMULATIVE")
 
     st.markdown("""
-    <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;
-                padding:.8rem 1.2rem;margin-bottom:1.2rem;font-size:.82rem;color:#0369a1">
-        <strong>ℹ️ මෙහි data:</strong> Excel file ෙකදීම calculate කළ monthly TAR/ACH/% සහ
-        cumulative TAR/ACH/% (F column area). Month select කළ විට ඒ month දක්වා
-        cumulative දර්ශනය වෙනවා.
-    </div>""", unsafe_allow_html=True)
+     
 
     mp_month_opts = [m for m in MONTH_ORDER if m in all_monthly_perf]
     if not mp_month_opts:
