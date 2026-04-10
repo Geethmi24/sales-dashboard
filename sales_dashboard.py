@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import re
 
 st.set_page_config(
     page_title="Sales Intelligence Hub",
@@ -198,17 +199,17 @@ def pct_badge(p): return "green" if p >= 100 else "amber" if p >= 80 else "red"
 
 # ── Hierarchy detection ──────────────────────────────
 def is_sbdm(name):
-    """Senior BDM — contains SBDM (case-insensitive)"""
-    return "SBDM" in str(name).upper()
+    """Senior BDM — contains (SBDM) or (SBDM) with spaces e.g. ( SBDM )"""
+    n = str(name).upper()
+    return bool(re.search(r'\(\s*SBDM\s*\)', n)) or ("SBDM" in n and "(" not in n)
 
 def is_dm(name):
-    """District Manager — contains (DM) but NOT SBDM"""
+    """District Manager — contains (DM) or ( DM ) with spaces, but NOT SBDM"""
     n = str(name).upper()
-    return "(DM)" in n and "SBDM" not in n
+    return bool(re.search(r'\(\s*DM\s*\)', n)) and not is_sbdm(name)
 
 def is_rp(name):
     """Regular sales rep — neither TOTAL, SBDM, nor DM"""
-    n = str(name).upper()
     return name != "TOTAL" and not is_sbdm(name) and not is_dm(name)
 
 def get_role(name):
@@ -524,12 +525,21 @@ def achievement_rows_ui(rows, fmt_fn=fmt_n):
     st.markdown(header + body, unsafe_allow_html=True)
 
 
+def _entity_has_data(name, data_ms):
+    """Return True if entity has any non-zero TAR or ACH."""
+    d = data_ms.get(name, {})
+    tar = d.get('TAR', d.get('TAR_LKR', 0)) or 0
+    ach = d.get('ACH', d.get('ACH_LKR', 0)) or 0
+    return (tar != 0) or (ach != 0)
+
+
 def _rp_rows_html(rp_list, data_ms, fmt_fn, color_accent):
-    """Render individual RP rows inside a DM block."""
-    if not rp_list:
-        return '<div style="padding:10px 12px;font-size:.8rem;color:#94a3b8;font-style:italic">No sales reps under this DM.</div>'
+    """Render individual RP rows inside a DM block — skips zero-data RPs."""
+    active_rps = [rp for rp in rp_list if _entity_has_data(rp, data_ms)]
+    if not active_rps:
+        return '<div style="padding:10px 12px;font-size:.8rem;color:#94a3b8;font-style:italic">No active sales reps under this DM.</div>'
     html = ""
-    for rp in rp_list:
+    for rp in active_rps:
         rd  = data_ms.get(rp, {})
         t   = rd.get('TAR', rd.get('TAR_LKR', 0))
         a   = rd.get('ACH', rd.get('ACH_LKR', 0))
@@ -594,6 +604,9 @@ def render_full_hierarchy(hier, data_ms, fmt_fn=fmt_n, label="units"):
         dms       = sbdm_node["dms"]
 
         if has_sbdm and sbdm_name:
+            # Skip if SBDM has no data
+            if not _entity_has_data(sbdm_name, data_ms):
+                continue
             # ── SBDM block ───────────────────────────────────────
             sd  = data_ms.get(sbdm_name, {})
             st_ = sd.get("TAR", sd.get("TAR_LKR", 0))
@@ -639,6 +652,13 @@ def _render_dm_node(dm_node, data_ms, fmt_fn, label, standalone=False):
     dm_name = dm_node["name"]
     rp_list = dm_node["rps"]
 
+    # Skip DM if no data at all
+    if not _entity_has_data(dm_name, data_ms):
+        return
+
+    # Only count RPs that have data
+    active_rps = [rp for rp in rp_list if _entity_has_data(rp, data_ms)]
+
     dd  = data_ms.get(dm_name, {})
     dt  = dd.get("TAR", dd.get("TAR_LKR", 0))
     da  = dd.get("ACH", dd.get("ACH_LKR", 0))
@@ -647,8 +667,8 @@ def _render_dm_node(dm_node, data_ms, fmt_fn, label, standalone=False):
     dc  = pct_color(dp); db = pct_badge(dp)
     vc  = "#4ade80" if dv >= 0 else "#f87171"
 
-    rp_tar_sum = sum(data_ms.get(r,{}).get("TAR", data_ms.get(r,{}).get("TAR_LKR",0)) for r in rp_list)
-    rp_ach_sum = sum(data_ms.get(r,{}).get("ACH", data_ms.get(r,{}).get("ACH_LKR",0)) for r in rp_list)
+    rp_tar_sum = sum(data_ms.get(r,{}).get("TAR", data_ms.get(r,{}).get("TAR_LKR",0)) for r in active_rps)
+    rp_ach_sum = sum(data_ms.get(r,{}).get("ACH", data_ms.get(r,{}).get("ACH_LKR",0)) for r in active_rps)
     rollup_pct = (rp_ach_sum / rp_tar_sum * 100) if rp_tar_sum else 0
 
     extra_class = "dm-standalone" if standalone else ""
@@ -686,7 +706,7 @@ def _render_dm_node(dm_node, data_ms, fmt_fn, label, standalone=False):
           <div style="width:52px;text-align:center">Ach %</div>
         </div>"""
 
-    html += _rp_rows_html(rp_list, data_ms, fmt_fn, dc)
+    html += _rp_rows_html(active_rps, data_ms, fmt_fn, dc)
 
     # Rollup footer
     match = "✓ DM = Σ RP" if abs(dt - rp_tar_sum) < 10 else f"⚠ DM {fmt_fn(dt)} ≠ Σ RP {fmt_fn(rp_tar_sum)}"
@@ -760,8 +780,8 @@ with st.sidebar:
         prd       = all_prod.get(sel_month, pd.DataFrame())
 
         has_sbdm  = hier["has_sbdm"]
-        all_dms   = hier["all_dms"]
-        all_sbdms = [e for e in eo if is_sbdm(e)]
+        all_dms   = [d for d in hier["all_dms"] if _entity_has_data(d, units_ms)]
+        all_sbdms = [e for e in eo if is_sbdm(e) and _entity_has_data(e, units_ms)]
 
         total_lkr     = lkr_ms.get('TOTAL', {})
         total_tar_lkr = total_lkr.get('TAR_LKR', 0)
@@ -917,7 +937,7 @@ with tab1:
     ov_units_ms = all_units[ov_month]
     ov_hier     = all_hierarchy[ov_month]
     ov_eo       = all_eo[ov_month]
-    ov_dm_keys  = ov_hier["all_dms"]
+    ov_dm_keys  = [d for d in ov_hier["all_dms"] if _entity_has_data(d, ov_lkr_ms)]
 
     ov_tot_lkr = ov_lkr_ms.get('TOTAL', {})
     ov_tar_lkr = ov_tot_lkr.get('TAR_LKR', 0)
@@ -1159,7 +1179,7 @@ with tab3:
     dm_lkr_ms = all_lkr[dm_sel_month]
     dm_hier   = all_hierarchy[dm_sel_month]
     dm_eo     = all_eo[dm_sel_month]
-    dm_keys   = dm_hier["all_dms"]
+    dm_keys   = [d for d in dm_hier["all_dms"] if _entity_has_data(d, dm_lkr_ms)]
 
     section(f"DM PERFORMANCE CARDS — {dm_sel_month}")
     if dm_keys:
