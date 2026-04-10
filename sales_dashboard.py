@@ -884,26 +884,35 @@ with tab_hier:
 
     # Apply filter
     f = hier_filter
+
     if f == "ALL":
-        render_full_hierarchy(h_hier, data_ms_h, fmt_fn_h, label_h)
+        clean_hier = remove_zero_nodes(copy.deepcopy(h_hier), data_ms_h)
+        render_full_hierarchy(clean_hier, data_ms_h, fmt_fn_h, label_h)
+
     else:
         # Filter to just the selected SBDM or DM subtree
         filtered_nodes = []
+
         for sn in h_hier["sbdm_nodes"]:
             if f.startswith("SBDM: ") and sn["name"] == f[6:]:
                 filtered_nodes.append(sn)
+
             elif f.startswith("DM: "):
                 dm_target = f[4:]
                 for dm_node in sn["dms"]:
                     if dm_node["name"] == dm_target:
-                        filtered_nodes.append({"name": sn["name"] if h_hier["has_sbdm"] else None,
-                                                "dms": [dm_node]})
+                        filtered_nodes.append({
+                            "name": sn["name"] if h_hier["has_sbdm"] else None,
+                            "dms": [dm_node]
+                        })
 
         # Build a mini hierarchy for the filtered view
         mini_hier = dict(h_hier)
         mini_hier["sbdm_nodes"] = filtered_nodes
+
         if filtered_nodes:
-            render_full_hierarchy(mini_hier, data_ms_h, fmt_fn_h, label_h)
+            clean_hier = remove_zero_nodes(copy.deepcopy(mini_hier), data_ms_h)
+            render_full_hierarchy(clean_hier, data_ms_h, fmt_fn_h, label_h)
         else:
             st.info("No data for selected filter.")
 
