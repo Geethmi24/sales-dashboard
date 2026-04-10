@@ -344,12 +344,31 @@ def parse_excel(file_obj):
 
         entity_cols = {}
         name_count  = {}
+        # Scan every even column starting at col 4.
+        # Accept a column as a TAR column if:
+        #   (a) row-0 cell is a non-empty name, AND
+        #   (b) row-1 cell looks like a target header OR is blank/unknown
+        #       (we do NOT skip on unknown headers — some sheets label columns
+        #        differently or leave them blank while still containing DM data)
+        SKIP_NAMES_ROW0 = {'', 'nan', 'TOTAL', 'PRODUCT', '#', 'TARGET',
+                           'ACHIEVEMENT', 'ACH', 'TAR', 'VAR', '%'}
+        # Also skip if the cell looks like a numeric value
         for j in range(4, raw.shape[1] - 1, 2):
             name_cell = raw.iloc[0, j] if j < raw.shape[1] else None
-            if pd.isna(name_cell) or str(name_cell).strip() in ('', 'nan'): continue
-            hdr = str(raw.iloc[1, j]).strip() if pd.notna(raw.iloc[1, j]) else ''
-            if hdr not in ('TAR', ''): continue
+            if name_cell is None or pd.isna(name_cell): continue
             base_name = str(name_cell).strip()
+            if base_name.upper() in SKIP_NAMES_ROW0: continue
+            # Skip purely numeric row-0 cells (column index labels, etc.)
+            try:
+                float(base_name); continue
+            except ValueError:
+                pass
+            # Check that the column contains at least some numeric data
+            # in the product rows or LKR row to avoid empty ghost columns
+            col_vals = raw.iloc[prod_rows + [lkr_row_idx], j]
+            if col_vals.apply(pd.to_numeric, errors='coerce').sum() == 0:
+                continue
+            # Deduplicate names
             if base_name in name_count:
                 name_count[base_name] += 1
                 unique_name = f"{base_name}-{name_count[base_name]}"
