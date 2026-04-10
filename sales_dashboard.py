@@ -451,6 +451,81 @@ def parse_excel(file_obj):
     return all_lkr, all_units, all_hierarchy, all_eo, all_prod, all_prod_entity
 
 # ══════════════════════════════════════════════════════
+# MONTHLY PERFORMANCE SECTION PARSER (row 81 area)
+# ══════════════════════════════════════════════════════
+def parse_monthly_perf_section(file_obj):
+    """
+    Parse the 'Sales Performance for...' section in each sheet.
+    Located around row 81 — identified by col F (index 5) = '%'.
+
+    Returns:
+      {
+        'APR': [{'product': 'AMIODAR 100', 'monthly_tar': 1651, 'monthly_ach': 1926,
+                 'monthly_pct': 116.7, 'cum_tar': None, 'cum_ach': None, 'cum_pct': None}, ...],
+        'MAY': [...],
+        ...
+      }
+    monthly_pct and cum_pct are already multiplied by 100 (percentage form).
+    cum_* is None for APR (first month, no cumulative yet).
+    """
+    xls = pd.ExcelFile(file_obj)
+    sheets = [s for s in xls.sheet_names if s.upper() not in {x.upper() for x in SKIP_SHEETS}]
+    result = {}
+
+    for sheet in sheets:
+        try:
+            raw = pd.read_excel(file_obj, sheet_name=sheet, header=None)
+        except Exception:
+            continue
+
+        # Find section header: col F (index 5) == '%'
+        sec_row = None
+        for r in range(70, min(130, raw.shape[0])):
+            val = raw.iloc[r, 5]
+            if pd.notna(val) and str(val).strip() == '%':
+                sec_row = r
+                break
+        if sec_row is None:
+            continue
+
+        products = []
+        for r in range(sec_row + 1, min(sec_row + 200, raw.shape[0])):
+            prod = raw.iloc[r, 1]
+            if pd.isna(prod):
+                continue
+            prod_str = str(prod).strip()
+            if prod_str in ('', 'nan', 'TOTAL', 'Sales Perfromance for ', 'Sales Performance for '):
+                if prod_str == 'TOTAL':
+                    break
+                continue
+
+            monthly_tar = pd.to_numeric(raw.iloc[r, 2], errors='coerce')
+            if pd.isna(monthly_tar) or float(monthly_tar) <= 0:
+                continue
+
+            monthly_ach = pd.to_numeric(raw.iloc[r, 3], errors='coerce')
+            monthly_pct = pd.to_numeric(raw.iloc[r, 5], errors='coerce')
+            cum_tar     = pd.to_numeric(raw.iloc[r, 6], errors='coerce') if raw.shape[1] > 6 else None
+            cum_ach     = pd.to_numeric(raw.iloc[r, 7], errors='coerce') if raw.shape[1] > 7 else None
+            cum_pct     = pd.to_numeric(raw.iloc[r, 9], errors='coerce') if raw.shape[1] > 9 else None
+
+            products.append({
+                'product':     prod_str,
+                'monthly_tar': float(monthly_tar),
+                'monthly_ach': float(monthly_ach) if pd.notna(monthly_ach) else 0.0,
+                'monthly_pct': float(monthly_pct) * 100 if pd.notna(monthly_pct) else 0.0,
+                'cum_tar':     float(cum_tar) if pd.notna(cum_tar) else None,
+                'cum_ach':     float(cum_ach) if pd.notna(cum_ach) else None,
+                'cum_pct':     float(cum_pct) * 100 if pd.notna(cum_pct) else None,
+            })
+
+        if products:
+            result[sheet] = products
+
+    return result
+
+
+# ══════════════════════════════════════════════════════
 # CUMULATIVE
 # ══════════════════════════════════════════════════════
 def build_cumulative_data(month_list, all_prod_entity, all_eo):
@@ -767,6 +842,7 @@ with st.sidebar:
         with st.spinner("Parsing Excel…"):
             (all_lkr, all_units, all_hierarchy,
              all_eo, all_prod, all_prod_entity) = parse_excel(uploaded_file)
+            all_monthly_perf = parse_monthly_perf_section(uploaded_file)
 
         month_list = [m for m in MONTH_ORDER if m in all_lkr]
         if not month_list:
@@ -1557,6 +1633,268 @@ with tab7:
         achievement_rows_ui(
             [dict(name=r["Entity"],TAR=r["CUM_TAR"],ACH=r["CUM_ACH"],PCT=r["CUM_PCT"])
              for _,r in comp_df.iterrows()],fmt_fn=fmt_n)
+
+    # ── NEW: Monthly Performance Section (F col row 81 data) ────────────────
+    section("📊 PRODUCT PERFORMANCE — MONTHLY vs CUMULATIVE")
+
+    st.markdown("""
+    <div style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;
+                padding:.8rem 1.2rem;margin-bottom:1.2rem;font-size:.82rem;color:#0369a1">
+        <strong>ℹ️ මෙහි data:</strong> Excel file ෙකදීම calculate කළ monthly TAR/ACH/% සහ
+        cumulative TAR/ACH/% (F column area). Month select කළ විට ඒ month දක්වා
+        cumulative දර්ශනය වෙනවා.
+    </div>""", unsafe_allow_html=True)
+
+    mp_month_opts = [m for m in MONTH_ORDER if m in all_monthly_perf]
+    if not mp_month_opts:
+        st.info("No monthly performance data found in this file.")
+    else:
+        mp_sel = st.selectbox("📅 Select Month (cumulative up to this month)",
+                               mp_month_opts,
+                               index=len(mp_month_opts)-1,
+                               key="mp_month_sel")
+
+        mp_data = all_monthly_perf.get(mp_sel, [])
+
+        if not mp_data:
+            st.info(f"No data for {mp_sel}.")
+        else:
+            # KPI summary row
+            total_m_tar = sum(p['monthly_tar'] for p in mp_data)
+            total_m_ach = sum(p['monthly_ach'] for p in mp_data)
+            total_m_pct = (total_m_ach / total_m_tar * 100) if total_m_tar else 0
+
+            has_cum = any(p['cum_pct'] is not None for p in mp_data)
+            total_c_tar = sum(p['cum_tar'] or 0 for p in mp_data if p['cum_tar'])
+            total_c_ach = sum(p['cum_ach'] or 0 for p in mp_data if p['cum_ach'])
+            total_c_pct = (total_c_ach / total_c_tar * 100) if total_c_tar else 0
+
+            mk1, mk2, mk3, mk4 = st.columns(4)
+            kpi_card(mk1, f"{mp_sel} — Total Target (units)", fmt_n(total_m_tar), "🎯", "c-blue")
+            kpi_card(mk2, f"{mp_sel} — Total Achievement (units)", fmt_n(total_m_ach), "✅",
+                     "c-green" if total_m_pct >= 100 else "c-amber",
+                     badge_text=f"{total_m_pct:.1f}%", badge_cls=pct_cls(total_m_pct))
+            if has_cum:
+                kpi_card(mk3, f"Cumulative Target (APR→{mp_sel})", fmt_n(total_c_tar), "📈", "c-indigo")
+                kpi_card(mk4, f"Cumulative Achievement (APR→{mp_sel})", fmt_n(total_c_ach), "🏆",
+                         "c-green" if total_c_pct >= 100 else "c-amber",
+                         badge_text=f"{total_c_pct:.1f}%", badge_cls=pct_cls(total_c_pct))
+            else:
+                kpi_card(mk3, "Cumulative", "First month — no prior data", "📅", "c-purple",
+                         sub="APR is the starting month")
+                kpi_card(mk4, "Monthly Ach %", f"{total_m_pct:.1f}%", "📊",
+                         "c-green" if total_m_pct >= 100 else "c-amber")
+
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ── Table ────────────────────────────────────────────
+            col_tbl, col_chart = st.columns([3, 2])
+
+            with col_tbl:
+                st.markdown(f"""
+                <div style="font-size:.78rem;font-weight:700;color:#1e293b;margin-bottom:.6rem">
+                    📋 Product breakdown — {mp_sel}
+                    {"&nbsp;&nbsp;<span style='font-size:.68rem;color:#6366f1;font-weight:600'>"
+                     "● Cumulative (APR→"+mp_sel+") also shown</span>" if has_cum else ""}
+                </div>""", unsafe_allow_html=True)
+
+                # Header
+                if has_cum:
+                    hdr = """
+                    <div style="display:flex;gap:8px;padding:6px 12px;background:#1e3a5f;border-radius:10px 10px 0 0;
+                                font-size:.62rem;font-weight:700;color:#93c5fd;text-transform:uppercase;letter-spacing:.06em;">
+                      <div style="flex:2">Product</div>
+                      <div style="width:60px;text-align:right">M-TAR</div>
+                      <div style="width:60px;text-align:right">M-ACH</div>
+                      <div style="width:54px;text-align:center">M-%</div>
+                      <div style="width:1px;background:rgba(255,255,255,.2);margin:0 4px"></div>
+                      <div style="width:60px;text-align:right">C-TAR</div>
+                      <div style="width:60px;text-align:right">C-ACH</div>
+                      <div style="width:54px;text-align:center">C-%</div>
+                    </div>"""
+                else:
+                    hdr = """
+                    <div style="display:flex;gap:8px;padding:6px 12px;background:#1e3a5f;border-radius:10px 10px 0 0;
+                                font-size:.62rem;font-weight:700;color:#93c5fd;text-transform:uppercase;letter-spacing:.06em;">
+                      <div style="flex:2">Product</div>
+                      <div style="width:80px;text-align:right">Target</div>
+                      <div style="width:80px;text-align:right">Achievement</div>
+                      <div style="width:60px;text-align:center">Ach %</div>
+                    </div>"""
+
+                rows_html = ""
+                for i, p in enumerate(sorted(mp_data,
+                                              key=lambda x: x['monthly_pct'], reverse=True)):
+                    mp  = p['monthly_pct']
+                    mc  = pct_color(mp); mb = pct_badge(mp)
+                    bg  = "#f0fdf4" if mp >= 100 else "#fffbeb" if mp >= 80 else "#fff"
+                    alt = "#f8fafc" if i % 2 == 0 else "#fff"
+
+                    if has_cum:
+                        cp  = p['cum_pct']
+                        cc  = pct_color(cp) if cp is not None else "#94a3b8"
+                        cb  = pct_badge(cp) if cp is not None else "neu"
+                        c_tar_str = fmt_n(p['cum_tar']) if p['cum_tar'] else "—"
+                        c_ach_str = fmt_n(p['cum_ach']) if p['cum_ach'] else "—"
+                        c_pct_str = f"{cp:.1f}%" if cp is not None else "—"
+
+                        rows_html += f"""
+                        <div style="display:flex;gap:8px;align-items:center;padding:8px 12px;
+                                    background:{alt};border-bottom:1px solid #f1f5f9;">
+                          <div style="flex:2;font-size:.82rem;font-weight:600;color:#1e293b;
+                                      overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                               title="{p['product']}">{p['product']}</div>
+                          <div style="width:60px;text-align:right;font-size:.75rem;color:#64748b">{fmt_n(p['monthly_tar'])}</div>
+                          <div style="width:60px;text-align:right;font-size:.75rem;font-weight:700;color:{mc}">{fmt_n(p['monthly_ach'])}</div>
+                          <div style="width:54px;text-align:center">
+                            <span style="font-size:.68rem;font-weight:800;padding:2px 6px;border-radius:6px;
+                                         background:{'#dcfce7' if mp>=100 else '#fef3c7' if mp>=80 else '#fee2e2'};
+                                         color:{'#15803d' if mp>=100 else '#92400e' if mp>=80 else '#b91c1c'}">{mp:.1f}%</span>
+                          </div>
+                          <div style="width:1px;background:#e2e8f0;margin:0 2px"></div>
+                          <div style="width:60px;text-align:right;font-size:.75rem;color:#6366f1">{c_tar_str}</div>
+                          <div style="width:60px;text-align:right;font-size:.75rem;font-weight:700;color:{cc}">{c_ach_str}</div>
+                          <div style="width:54px;text-align:center">
+                            <span style="font-size:.68rem;font-weight:800;padding:2px 6px;border-radius:6px;
+                                         background:{'#ede9fe' if cp is None else '#dcfce7' if cp>=100 else '#fef3c7' if cp>=80 else '#fee2e2'};
+                                         color:{'#6d28d9' if cp is None else '#15803d' if cp>=100 else '#92400e' if cp>=80 else '#b91c1c'}">{c_pct_str}</span>
+                          </div>
+                        </div>"""
+                    else:
+                        rows_html += f"""
+                        <div style="display:flex;gap:8px;align-items:center;padding:8px 12px;
+                                    background:{alt};border-bottom:1px solid #f1f5f9;">
+                          <div style="flex:2;font-size:.82rem;font-weight:600;color:#1e293b">{p['product']}</div>
+                          <div style="width:80px;text-align:right;font-size:.75rem;color:#64748b">{fmt_n(p['monthly_tar'])}</div>
+                          <div style="width:80px;text-align:right;font-size:.75rem;font-weight:700;color:{mc}">{fmt_n(p['monthly_ach'])}</div>
+                          <div style="width:60px;text-align:center">
+                            <span style="font-size:.68rem;font-weight:800;padding:2px 6px;border-radius:6px;
+                                         background:{'#dcfce7' if mp>=100 else '#fef3c7' if mp>=80 else '#fee2e2'};
+                                         color:{'#15803d' if mp>=100 else '#92400e' if mp>=80 else '#b91c1c'}">{mp:.1f}%</span>
+                          </div>
+                        </div>"""
+
+                st.markdown(
+                    f'<div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;'
+                    f'box-shadow:0 2px 8px rgba(0,0,0,.05)">{hdr}{rows_html}</div>',
+                    unsafe_allow_html=True)
+
+            # ── Chart ────────────────────────────────────────────
+            with col_chart:
+                prods   = [p['product'][:18]+"…" if len(p['product'])>18 else p['product']
+                           for p in mp_data]
+                m_pcts  = [p['monthly_pct'] for p in mp_data]
+
+                fig_mp = go.Figure()
+                fig_mp.add_trace(go.Bar(
+                    name=f"{mp_sel} Monthly %",
+                    y=prods, x=m_pcts, orientation='h',
+                    marker=dict(color=[pct_color(p) for p in m_pcts],
+                                opacity=0.85, line=dict(width=0)),
+                    text=[f"{p:.1f}%" for p in m_pcts],
+                    textposition='outside', textfont=dict(size=10)))
+
+                if has_cum:
+                    c_pcts = [p['cum_pct'] if p['cum_pct'] is not None else 0
+                              for p in mp_data]
+                    fig_mp.add_trace(go.Scatter(
+                        name=f"Cumulative (APR→{mp_sel})",
+                        y=prods, x=c_pcts, mode='markers',
+                        marker=dict(symbol='diamond', size=10,
+                                    color='#6366f1',
+                                    line=dict(color='#fff', width=1.5))))
+
+                fig_mp.add_vline(x=100, line_color="#22c55e",
+                                 line_dash="dot", line_width=1.5)
+                fig_mp.update_layout(
+                    **PLOTLY_BASE,
+                    height=max(320, len(mp_data) * 32 + 60),
+                    margin=dict(t=10, b=40, l=10, r=70),
+                    xaxis=dict(gridcolor="#f1f5f9",
+                               tickfont=dict(size=10, color="#94a3b8"),
+                               ticksuffix="%", title="Achievement %"),
+                    yaxis=dict(tickfont=dict(size=10, color="#64748b"),
+                               autorange='reversed'),
+                    legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h",
+                                y=1.04, xanchor="right", x=1,
+                                font=dict(size=10)),
+                    barmode='overlay')
+                st.plotly_chart(fig_mp, use_container_width=True,
+                                config={"displayModeBar": False})
+
+            # ── Month-over-month trend across all loaded months ──
+            if len(mp_month_opts) > 1:
+                section(f"PRODUCT % TREND — APR → {mp_sel}")
+                trend_rows_mp = []
+                for m in [mx for mx in MONTH_ORDER if mx in all_monthly_perf
+                          and MONTH_ORDER.index(mx) <= MONTH_ORDER.index(mp_sel)]:
+                    for p in all_monthly_perf[m]:
+                        trend_rows_mp.append({
+                            'Month': m,
+                            'Product': p['product'],
+                            'Monthly %': p['monthly_pct'],
+                            'Cumulative %': p['cum_pct'],
+                        })
+
+                if trend_rows_mp:
+                    tr_mp_df = pd.DataFrame(trend_rows_mp)
+                    prod_opts_mp = ["ALL (Total)"] + sorted(tr_mp_df['Product'].unique().tolist())
+                    sel_prod_mp = st.selectbox("Select Product", prod_opts_mp, key="mp_prod_trend")
+
+                    if sel_prod_mp == "ALL (Total)":
+                        # Aggregate across all products per month
+                        agg = tr_mp_df.groupby('Month').agg(
+                            Monthly_pct=('Monthly %','mean'),
+                            Cum_pct=('Cumulative %', lambda x: x.dropna().mean() if x.dropna().any() else None)
+                        ).reset_index()
+                        agg['Month_order'] = agg['Month'].map(
+                            {m: i for i, m in enumerate(MONTH_ORDER)})
+                        agg = agg.sort_values('Month_order')
+                        plot_df = agg.rename(columns={'Monthly_pct':'Monthly %','Cum_pct':'Cumulative %'})
+                        title_str = "Average across all products"
+                    else:
+                        plot_df = tr_mp_df[tr_mp_df['Product'] == sel_prod_mp].copy()
+                        plot_df['Month_order'] = plot_df['Month'].map(
+                            {m: i for i, m in enumerate(MONTH_ORDER)})
+                        plot_df = plot_df.sort_values('Month_order')
+                        title_str = sel_prod_mp
+
+                    fig_tr_mp = go.Figure()
+                    fig_tr_mp.add_trace(go.Bar(
+                        name="Monthly %",
+                        x=plot_df['Month'], y=plot_df['Monthly %'],
+                        marker=dict(
+                            color=[pct_color(v) for v in plot_df['Monthly %']],
+                            opacity=0.7, line=dict(width=0)),
+                        text=[f"{v:.1f}%" for v in plot_df['Monthly %']],
+                        textposition='outside', textfont=dict(size=10)))
+
+                    cum_col = 'Cumulative %'
+                    if cum_col in plot_df.columns:
+                        cum_vals = pd.to_numeric(plot_df[cum_col], errors='coerce')
+                        if cum_vals.notna().any():
+                            fig_tr_mp.add_trace(go.Scatter(
+                                name="Cumulative %",
+                                x=plot_df['Month'], y=cum_vals,
+                                mode='lines+markers',
+                                line=dict(color='#6366f1', width=2.5,dash='dot'),
+                                marker=dict(size=8, color='#6366f1',
+                                            line=dict(color='#fff', width=1.5))))
+
+                    fig_tr_mp.add_hline(y=100, line_color="#22c55e",
+                                        line_dash="dot", line_width=1.5)
+                    fig_tr_mp.update_layout(
+                        **PLOTLY_BASE, height=320,
+                        margin=dict(t=20, b=40, l=60, r=20),
+                        title=dict(text=title_str, font=dict(size=12, color="#64748b")),
+                        xaxis=dict(tickfont=dict(size=11, color="#64748b"), showgrid=False),
+                        yaxis=dict(gridcolor="#f1f5f9",
+                                   tickfont=dict(size=10, color="#94a3b8"),
+                                   title="Achievement %", ticksuffix="%"),
+                        legend=dict(bgcolor="rgba(0,0,0,0)", orientation="h",
+                                    y=1.05, xanchor="right", x=1))
+                    st.plotly_chart(fig_tr_mp, use_container_width=True,
+                                    config={"displayModeBar": False})
 
 # ══════════════════════════════════════════════════════
 # FOOTER
